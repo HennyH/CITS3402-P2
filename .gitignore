@@ -1,3 +1,11 @@
+# Visual Studio Files
+*.vs
+*.user
+**/x64/Debug
+**/x86/Debug
+**/x64/Release
+**/x86/Release
+
 # Prerequisites
 *.d
 
