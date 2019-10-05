@@ -7,3 +7,8 @@ Follow the instructions [here](https://blogs.technet.microsoft.com/windowshpc/20
 # Development
 
 Install [CodeMaid](https://marketplace.visualstudio.com/items?itemName=SteveCadwallader.CodeMaid) and after it is installed enable formatting on save by clicking `Extensions > Code Main > Automatic Cleanup On Save ...`.
+
+# References
+
+1. [Parallelizing Floyd-Warshall](https://gkaracha.github.io/papers/floyd-warshall.pdf)
+2. [Parallelizing Floyd-Warshall](https://en.wikipedia.org/wiki/Parallel_all-pairs_shortest_path_algorithm#Floyd_algorithm)
