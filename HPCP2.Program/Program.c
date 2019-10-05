@@ -11,7 +11,7 @@
 
 errno_t get_tile_i_j_for_process_rank(int rank, int n_vertices, int tile_dim, int* tile_i, int* tile_j)
 {
-  int n_tiles_in_axis = (int)floor(n_vertices / tile_dim);
+  int n_tiles_in_axis = (int)ceil((double)n_vertices / (double)tile_dim);
   int curr_rank = 0;
   for (int i = 0; i < n_tiles_in_axis; i++) {
     for (int j = 0; j < n_tiles_in_axis; j++) {
@@ -53,9 +53,14 @@ errno_t apsp_floyd_warshall_distribute_tiles(int* adjacency_matrix, int n_vertic
       for (int from_vertex = from_vertex_start; from_vertex < from_vertex_end; from_vertex++) {
         /* to vertex is the 'col' */
         for (int to_vertex = to_vertex_start; to_vertex < to_vertex_end; to_vertex++) {
-          int tile_i = rank * tile_size + (tile_value_i++);
-          int adjacency_i = to_vertex + from_vertex * n_vertices;
-          tiles[tile_i] = adjacency_matrix[adjacency_i];
+          const int tile_i = rank * tile_size + (tile_value_i++);
+          if (from_vertex >= n_vertices || to_vertex >= n_vertices) {
+            tiles[tile_i] = INT_NULL;
+          }
+          else {
+            const int adjacency_i = to_vertex + from_vertex * n_vertices;
+            tiles[tile_i] = adjacency_matrix[adjacency_i];
+          }
         }
       }
     }
@@ -117,7 +122,7 @@ errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices, int** results
   if (my_rank > n_processes) {
     return 0;
   }
-  const int tile_dim = (int)floor(n_vertices / sqrt(n_processes));
+  const int tile_dim = (int)ceil((double)n_vertices / sqrt(n_processes));
   const int tile_size = tile_dim * tile_dim;
   MPI_Comm tile_world_comm;
   apsp_floyd_warshall_create_tile_world_comm(n_processes, &tile_world_comm);
@@ -127,12 +132,14 @@ errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices, int** results
     return ENOMEM;
   }
   apsp_floyd_warshall_distribute_tiles(adjacency_matrix, n_vertices, tile_dim, 0, tile_world_comm, tile);
+  int tile_i, tile_j;
+  get_tile_i_j_for_process_rank(my_rank, n_vertices, tile_dim, &tile_i, &tile_j);
 
 #ifdef DEBUG
   if (my_rank == 0) {
     printf("apsp_floyd_warshall: divided %i veritices into %i tiles of dimension %i\n", n_vertices, n_processes, tile_dim);
   }
-  printf("apsp_floyd_warshall: process %i processing tile: [%i, %i, %i, %i]\n", my_rank, tile[0], tile[1], tile[2], tile[3]);
+  printf("apsp_floyd_warshall: process %i processing tile (%i, %i): [%i, %i, %i, %i, %i, %i, %i, %i, %i]\n", my_rank, tile_i, tile_j, tile[0], tile[1], tile[2], tile[3], tile[4], tile[5], tile[6], tile[7], tile[8]);
 #endif // DEBUG
 
   return 0;
@@ -157,11 +164,12 @@ int main(int argc, char* argv[])
 #ifdef DEBUG
   pause_to_allow_attachment();
 #endif // DEBUG
-  int adjacency_matrix[] = { 0, 15, 1, 1,
-                             0, 0,  3, 0,
-                             1, 3,  0, 0,
-                             0, 1,  1, 0 };
-  apsp_floyd_warshall(adjacency_matrix, 4, NULL);
+  int adjacency_matrix[] = { 0, 15, 1, 1, 7,
+                             0, 0,  3, 0, 7,
+                             1, 3,  0, 0, 7,
+                             0, 1,  1, 0, 7,
+                             8, 9,  4, 3, 5 };
+  apsp_floyd_warshall(adjacency_matrix, 5, NULL);
   MPI_Finalize();
   return 0;
 }
