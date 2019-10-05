@@ -222,8 +222,9 @@ errno_t apsp_floyd_warshall_get_kth_col_segment(int k, int* tile, int tile_dim, 
    * caller know.
    *
    * Our tile is contains the column if: tile_i * tile_dim <= k < (tile_i + 1) * tile_dim
+   * Note: on the RHS we have '<' not a '<=' because we're 0 indexed.
    */
-  if (k < tile_i * tile_dim || k >= (tile_i + 1) * tile_dim) {
+  if (!(tile_i * tile_dim <= k && k < tile_dim * (tile_i + 1))) {
     *col_segment = NULL;
     return 0;
   }
@@ -233,10 +234,37 @@ errno_t apsp_floyd_warshall_get_kth_col_segment(int k, int* tile, int tile_dim, 
     return ENOMEM;
   }
 
-  /* We're going to over each row in our tile and pluck out the value that occurs in the kth-col*/
+  /* We're going to over each row in our tile and pluck out the value that occurs in the kth-col */
   const int kth_column_offset_within_tile = k - tile_i * tile_dim;
   for (int row = 0; row < tile_dim; row++) {
     (*col_segment)[row] = tile[row * tile_dim + kth_column_offset_within_tile];
+  }
+
+  return 0;
+}
+
+errno_t apsp_floyd_warshall_get_kth_row_segment(int k, int* tile, int tile_dim, int tile_i, int tile_j, int** row_segment)
+{
+  /* quickly check that the kth row actually goes through our tile! If it doesn't we should set the row_segment pointer to NULL to let the
+   * caller know.
+   *
+   * Our tile is contains the row if: tile_j * tile_dim <= k < (tile_j + 1) * tile_dim
+   * Note: on the RHS we have '<' not a '<=' because we're 0 indexed.
+   */
+  if (!(tile_j * tile_dim <= k && k < tile_dim * (tile_j + 1))) {
+    *row_segment = NULL;
+    return 0;
+  }
+
+  *row_segment = calloc(tile_dim, sizeof(int));
+  if (*row_segment == NULL) {
+    return ENOMEM;
+  }
+
+  /* We're going to over each column in our tile and pluck out the value that occurs in the kth-row */
+  const int kth_row_offset_within_tile = (k - tile_j * tile_dim) * tile_dim;
+  for (int col = 0; col < tile_dim; col++) {
+    (*row_segment)[col] = tile[kth_row_offset_within_tile + col];
   }
 
   return 0;
@@ -302,14 +330,23 @@ errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices, int** results
   for (int k = 0; k < n_vertices; k++) {
     int* my_kth_row_segment = NULL;
     int* my_kth_col_segment = NULL;
+    apsp_floyd_warshall_get_kth_row_segment(k, tile, tile_dim, tile_i, tile_j, &my_kth_row_segment);
     apsp_floyd_warshall_get_kth_col_segment(k, tile, tile_dim, tile_i, tile_j, &my_kth_col_segment);
 #ifdef DEBUG
+    printf("apsp_floyd_warshall: process %i processing tile (%i, %i) for k = %i ", my_rank, tile_i, tile_j, k);
     if (my_kth_col_segment == NULL) {
-      printf("apsp_floyd_warshall: process %i processing tile (%i, %i) for k = %i has a no column segment\n", my_rank, tile_i, tile_j, k);
+      printf("has no column segment ");
     }
     else {
-      printf("apsp_floyd_warshall: process %i processing tile (%i, %i) for k = %i has a column segment of: [%i, %i]\n", my_rank, tile_i, tile_j, k, my_kth_col_segment[0], my_kth_col_segment[1]);
+      printf("has a column segment of [%i, %i] ", my_kth_col_segment[0], my_kth_col_segment[1]);
     }
+    if (my_kth_row_segment == NULL) {
+      printf("and has no row segment ");
+    }
+    else {
+      printf("and has a row segment of [%i, %i] ", my_kth_row_segment[0], my_kth_row_segment[1]);
+    }
+    printf("\n");
 #endif // DEBUG
   }
   return 0;
