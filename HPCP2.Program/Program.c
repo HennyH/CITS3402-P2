@@ -9,9 +9,26 @@
 #define INT_INFINITY -1
 #define INT_NULL -2
 
-errno_t get_tile_i_j_for_process_rank(int rank, int n_vertices, int tile_dim, int* tile_i, int* tile_j)
+inline int apsp_floyd_warshall_calc_tile_dim(int n_vertices, int n_processes)
 {
-  int n_tiles_in_axis = (int)ceil((double)n_vertices / (double)tile_dim);
+  /*
+  * Math behind the calculation of tile_dim:
+  *    processes × tile_dim²  = vertices²
+  * => tile_dim²              = vertices² / processes
+  * => tile_dim               = √(vertices² / processes)
+  * => tile_dim               = vertices / √(processes)
+  */
+  return (int)ceil((double)n_vertices / sqrt(n_processes));
+}
+
+inline int apsp_floyd_warshall_calc_tile_matrix_dim(int n_vertices, int tile_dim)
+{
+  return (int)ceil((double)n_vertices / (double)tile_dim);
+}
+
+errno_t apsp_floyd_warshall_tile_i_j_for_process_rank(int rank, int n_vertices, int tile_dim, int* tile_i, int* tile_j)
+{
+  int n_tiles_in_axis = apsp_floyd_warshall_calc_tile_matrix_dim(n_vertices, tile_dim);
   int curr_rank = 0;
   for (int i = 0; i < n_tiles_in_axis; i++) {
     for (int j = 0; j < n_tiles_in_axis; j++) {
@@ -26,7 +43,7 @@ errno_t get_tile_i_j_for_process_rank(int rank, int n_vertices, int tile_dim, in
   return EINVAL;
 }
 
-errno_t apsp_floyd_warshall_distribute_tiles(int* adjacency_matrix, int n_vertices, int tile_dim, int root, MPI_Comm comm, int* tile_buffer)
+errno_t apsp_floyd_warshall_distribute_tiles(int* adjacency_matrix, int n_vertices, int tile_dim, int root, MPI_Comm comm, int* tile_i, int* tile_j, int* tile_buffer)
 {
   int n_processes, my_rank;
   MPI_Comm_rank(comm, &my_rank);
@@ -43,7 +60,7 @@ errno_t apsp_floyd_warshall_distribute_tiles(int* adjacency_matrix, int n_vertic
 
     for (int rank = 0; rank < n_processes; rank++) {
       int send_tile_i, send_tile_j = 0;
-      get_tile_i_j_for_process_rank(rank, n_vertices, tile_dim, &send_tile_i, &send_tile_j);
+      apsp_floyd_warshall_tile_i_j_for_process_rank(rank, n_vertices, tile_dim, &send_tile_i, &send_tile_j);
       const int from_vertex_start = send_tile_j * tile_dim;
       const int from_vertex_end = from_vertex_start + tile_dim;
       const int to_vertex_start = send_tile_i * tile_dim;
@@ -71,6 +88,8 @@ errno_t apsp_floyd_warshall_distribute_tiles(int* adjacency_matrix, int n_vertic
   MPI_Type_commit(&tile_type);
   MPI_Scatter(tiles, 1, tile_type, tile_buffer, tile_size, MPI_INT, root, comm);
 
+  apsp_floyd_warshall_tile_i_j_for_process_rank(my_rank, n_vertices, tile_dim, tile_i, tile_j);
+
   return 0;
 }
 
@@ -94,6 +113,76 @@ errno_t apsp_floyd_warshall_create_tile_world_comm(int n_processes, MPI_Comm* ti
   return 0;
 }
 
+errno_t apsp_floyd_warshall_create_row_comms(MPI_Comm tile_world_comm, int n_vertices, int tile_dim, int tile_matrix_dim, MPI_Comm* const tile_row_comms)
+{
+  int n_tiles;
+  MPI_Comm_size(tile_world_comm, &n_tiles);
+
+  MPI_Group tile_world_group;
+  MPI_Comm_group(tile_world_comm, &tile_world_group);
+
+  for (int row = 0; row < tile_matrix_dim; row++) {
+    /* This array will contain the _ranks_ of the processes (within the tile world) which are processing a tile along the current row. */
+    int* ranks_in_row = calloc(tile_matrix_dim, sizeof(int));
+    if (ranks_in_row == NULL) {
+      return ENOMEM;
+    }
+    for (int rank = 0; rank < n_tiles; rank++) {
+      int tile_i, tile_j;
+      apsp_floyd_warshall_tile_i_j_for_process_rank(rank, n_vertices, tile_dim, &tile_i, &tile_j);
+      /* This partiuclar rank corresponds to the tile at (tile_i, tile_j) and so we check if that tile is along the current row. We
+       * can use the `tile_j` as the index to store this rank at because by definition they go from 0...tile_matrix_dim (which is the size
+       * of the matrix we allocated).
+       */
+      if (tile_i == row) {
+        ranks_in_row[tile_j] = rank;
+      }
+    }
+
+    /* Now that we know the ranks of the tiles which occur in the row we create a communicator which includes them all derived from tile world. */
+    MPI_Group tile_row_group;
+    MPI_Group_incl(tile_world_group, tile_matrix_dim, ranks_in_row, &tile_row_group);
+    tile_row_comms[row] = tile_row_group;
+  }
+
+  return 0;
+}
+
+errno_t apsp_floyd_warshall_create_col_comms(MPI_Comm tile_world_comm, int n_vertices, int tile_dim, int tile_matrix_dim, MPI_Comm* const tile_col_comms)
+{
+  int n_tiles;
+  MPI_Comm_size(tile_world_comm, &n_tiles);
+
+  MPI_Group tile_world_group;
+  MPI_Comm_group(tile_world_comm, &tile_world_group);
+
+  for (int col = 0; col < tile_matrix_dim; col++) {
+    /* This array will contain the _ranks_ of the processes (within the tile world) which are processing a tile along the current col. */
+    int* ranks_in_col = calloc(tile_matrix_dim, sizeof(int));
+    if (ranks_in_col == NULL) {
+      return ENOMEM;
+    }
+    for (int rank = 0; rank < n_tiles; rank++) {
+      int tile_i, tile_j;
+      apsp_floyd_warshall_tile_i_j_for_process_rank(rank, n_vertices, tile_dim, &tile_i, &tile_j);
+      /* This partiuclar rank corresponds to the tile at (tile_i, tile_j) and so we check if that tile is along the current col. We
+       * can use the `tile_i` as the index to store this rank at because by definition they go from 0...tile_matrix_dim (which is the size
+       * of the matrix we allocated).
+       */
+      if (tile_j == col) {
+        ranks_in_col[tile_i] = rank;
+      }
+    }
+
+    /* Now that we know the ranks of the tiles which occur in the col we create a communicator which includes them all derived from tile world. */
+    MPI_Group tile_col_group;
+    MPI_Group_incl(tile_world_group, tile_matrix_dim, ranks_in_col, &tile_col_group);
+    tile_col_comms[col] = tile_col_group;
+  }
+
+  return 0;
+}
+
 errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices, int** results)
 {
   int n_available_processes, my_rank;
@@ -108,12 +197,6 @@ errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices, int** results
    * data from other tiles - exactly what data they need will be detailed later on. We divide `d` up such that it consists of a tile for each
    * process we have.
    *
-   * Math behind the calculation of tile_dim:
-   *    processes × tile_dim²  = vertices²
-   * => tile_dim²              = vertices² / processes
-   * => tile_dim               = √(vertices² / processes)
-   * => tile_dim               = vertices / √(processes)
-   *
    * Note: The maximum parallelization would result in each tile being a single distance, you can't subdivide further than that...
    */
   const int max_parallelism = n_vertices * n_vertices;
@@ -122,18 +205,32 @@ errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices, int** results
   if (my_rank > n_processes) {
     return 0;
   }
-  const int tile_dim = (int)ceil((double)n_vertices / sqrt(n_processes));
-  const int tile_size = tile_dim * tile_dim;
-  MPI_Comm tile_world_comm;
-  apsp_floyd_warshall_create_tile_world_comm(n_processes, &tile_world_comm);
 
-  int* tile = calloc(tile_size, sizeof(int));
+  const int tile_dim = apsp_floyd_warshall_calc_tile_dim(n_vertices, n_processes);
+  const int tile_matrix_dim = apsp_floyd_warshall_calc_tile_matrix_dim(n_vertices, tile_dim);
+  const int tile_size = tile_dim * tile_dim;
+  int* const tile = calloc(tile_size, sizeof(int));
+  int tile_i, tile_j;
   if (tile == NULL) {
     return ENOMEM;
   }
-  apsp_floyd_warshall_distribute_tiles(adjacency_matrix, n_vertices, tile_dim, 0, tile_world_comm, tile);
-  int tile_i, tile_j;
-  get_tile_i_j_for_process_rank(my_rank, n_vertices, tile_dim, &tile_i, &tile_j);
+
+  /* Create the various communicators that facilitate the distribution of messages to particular sections of the tiled adjacancy matrix:
+   * - tile_world_comm: This is a communicator which includes each process that will be given a tile to process.
+   * - tile_row_comm[]: A collection of communicators such that the i-th entry includes all processes processing a tile along the i-th tile row.
+   * - tile_col_comm[]: A collection of communicators such that the j-th entry includes all processes processing a tile along the j-th tile col.
+   */
+  MPI_Comm tile_world_comm;
+  MPI_Comm* const tile_row_comms = calloc(tile_matrix_dim, sizeof(MPI_Comm));
+  MPI_Comm* const tile_col_comms = calloc(tile_matrix_dim, sizeof(MPI_Comm));
+  apsp_floyd_warshall_create_tile_world_comm(n_processes, &tile_world_comm);
+  apsp_floyd_warshall_create_row_comms(tile_world_comm, n_vertices, tile_dim, tile_matrix_dim, tile_row_comms);
+  apsp_floyd_warshall_create_col_comms(tile_world_comm, n_vertices, tile_dim, tile_matrix_dim, tile_col_comms);
+
+  /* This is the initial communication stage which distributes the tiles to each process. Underneath this method uses a collective
+   * scatter communication and hence all processes should call the method.
+   */
+  apsp_floyd_warshall_distribute_tiles(adjacency_matrix, n_vertices, tile_dim, 0, tile_world_comm, &tile_i, &tile_j, tile);
 
 #ifdef DEBUG
   if (my_rank == 0) {
