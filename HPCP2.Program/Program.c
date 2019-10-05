@@ -9,6 +9,12 @@
 #define INT_INFINITY -1
 #define INT_NULL -2
 
+/// <summary>
+/// Calculates the dimension of the tiles which compose the 'tile matrix'.
+/// </summary>
+/// <param name="n_vertices">The n vertices.</param>
+/// <param name="n_processes">The n processes.</param>
+/// <returns>The dimension of the tiles.</returns>
 inline int apsp_floyd_warshall_calc_tile_dim(int n_vertices, int n_processes)
 {
   /*
@@ -21,11 +27,26 @@ inline int apsp_floyd_warshall_calc_tile_dim(int n_vertices, int n_processes)
   return (int)ceil((double)n_vertices / sqrt(n_processes));
 }
 
+/// <summary>
+/// Calculates the dimension of the 'tile matrix' (the matrix of tiles which overlays the adjacency matrix).
+/// </summary>
+/// <param name="n_vertices">The n vertices.</param>
+/// <param name="n_processes">The n processes.</param>
+/// <returns>The dimension of the tile matrix.</returns>
 inline int apsp_floyd_warshall_calc_tile_matrix_dim(int n_vertices, int tile_dim)
 {
   return (int)ceil((double)n_vertices / (double)tile_dim);
 }
 
+/// <summary>
+/// Determine the tile position (row=tile_i, col=tile_j) which a process with the given rank is responsible for processing.
+/// </summary>
+/// <param name="rank">The rank.</param>
+/// <param name="n_vertices">The n vertices.</param>
+/// <param name="tile_dim">The dimension of the tiles.</param>
+/// <param name="tile_i">out: The tile_i.</param>
+/// <param name="tile_j">out: The tile_j.</param>
+/// <returns>An error code.</returns>
 errno_t apsp_floyd_warshall_tile_i_j_for_process_rank(int rank, int n_vertices, int tile_dim, int* tile_i, int* tile_j)
 {
   int n_tiles_in_axis = apsp_floyd_warshall_calc_tile_matrix_dim(n_vertices, tile_dim);
@@ -43,6 +64,18 @@ errno_t apsp_floyd_warshall_tile_i_j_for_process_rank(int rank, int n_vertices, 
   return EINVAL;
 }
 
+/// <summary>
+/// Partitions an adjacency matrix into appropriatley sized tiles and scatters them to processes in the given communicator.
+/// </summary>
+/// <param name="adjacency_matrix">The adjacency matrix.</param>
+/// <param name="n_vertices">The n vertices.</param>
+/// <param name="tile_dim">The dimension of the tiles.</param>
+/// <param name="root">The root process which sends the data.</param>
+/// <param name="comm">The communicator.</param>
+/// <param name="tile_i">out: The recieved tile_i.</param>
+/// <param name="tile_j">out: The recieved tile_j.</param>
+/// <param name="tile_buffer">inout: The buffer to store the recieved tile.</param>
+/// <returns>An error code.</returns>
 errno_t apsp_floyd_warshall_distribute_tiles(int* adjacency_matrix, int n_vertices, int tile_dim, int root, MPI_Comm comm, int* tile_i, int* tile_j, int* tile_buffer)
 {
   int n_processes, my_rank;
