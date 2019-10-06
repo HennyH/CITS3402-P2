@@ -109,9 +109,9 @@ errno_t apsp_floyd_warshall_distribute_tiles(int* adjacency_matrix, int n_vertic
     for (int rank = 0; rank < n_processes; rank++) {
       int send_tile_i, send_tile_j = 0;
       apsp_floyd_warshall_tile_determine_i_j_for_process_rank(rank, n_vertices, tile_dim, &send_tile_i, &send_tile_j);
-      const int from_vertex_start = send_tile_j * tile_dim;
+      const int from_vertex_start = send_tile_i * tile_dim;
       const int from_vertex_end = from_vertex_start + tile_dim;
-      const int to_vertex_start = send_tile_i * tile_dim;
+      const int to_vertex_start = send_tile_j * tile_dim;
       const int to_vertex_end = to_vertex_start + tile_dim;
       int tile_value_i = 0;
       /* from vertex is the 'row' */
@@ -190,7 +190,7 @@ errno_t apsp_floyd_warshall_create_row_comms(MPI_Comm tile_world_comm, int n_ver
     /* Now that we know the ranks of the tiles which occur in the row we create a communicator which includes them all derived from tile world. */
     MPI_Group tile_row_group;
     int status = MPI_Group_incl(tile_world_group, tile_matrix_dim, ranks_in_row, &tile_row_group);
-    tile_row_comms[row] = tile_row_group;
+    MPI_Comm_create(tile_world_comm, tile_row_group, tile_row_comms + row);
   }
 
   return 0;
@@ -225,7 +225,7 @@ errno_t apsp_floyd_warshall_create_col_comms(MPI_Comm tile_world_comm, int n_ver
     /* Now that we know the ranks of the tiles which occur in the col we create a communicator which includes them all derived from tile world. */
     MPI_Group tile_col_group;
     MPI_Group_incl(tile_world_group, tile_matrix_dim, ranks_in_col, &tile_col_group);
-    tile_col_comms[col] = tile_col_group;
+    MPI_Comm_create(tile_world_comm, tile_col_group, tile_col_comms + col);
   }
 
   return 0;
@@ -233,37 +233,34 @@ errno_t apsp_floyd_warshall_create_col_comms(MPI_Comm tile_world_comm, int n_ver
 
 inline int apsp_floyd_warshall_does_tile_have_kth_col_segment(int k, int tile_dim, int tile_i, int tile_j)
 {
-  /* Our tile is contains the column if: tile_i * tile_dim <= k < (tile_i + 1) * tile_dim
-   * Note: on the RHS we have '<' not a '<=' because we're 0 indexed.
-   */
-  return (tile_i * tile_dim <= k && k < tile_dim * (tile_i + 1));
-}
-
-inline int apsp_floyd_warshall_does_tile_have_kth_row_segment(int k, int tile_dim, int tile_i, int tile_j)
-{
-  /* Our tile is contains the row if: tile_j * tile_dim <= k < (tile_j + 1) * tile_dim
+  /* Our tile is contains the column if: tile_j * tile_dim <= k < (tile_j + 1) * tile_dim
    * Note: on the RHS we have '<' not a '<=' because we're 0 indexed.
    */
   return (tile_j * tile_dim <= k && k < tile_dim * (tile_j + 1));
 }
 
+inline int apsp_floyd_warshall_does_tile_have_kth_row_segment(int k, int tile_dim, int tile_i, int tile_j)
+{
+  /* Our tile is contains the row if: tile_i * tile_dim <= k < (tile_i + 1) * tile_dim
+   * Note: on the RHS we have '<' not a '<=' because we're 0 indexed.
+   */
+  return (tile_i * tile_dim <= k && k < tile_dim * (tile_i + 1));
+}
+
 errno_t apsp_floyd_warshall_get_kth_col_segment(int k, int* tile, int tile_dim, int tile_i, int tile_j, int** col_segment)
 {
-  /* quickly check that the kth column actually goes through our tile! If it doesn't we should set the col_segment pointer to NULL to let the
-   * caller know.
-   */
+  *col_segment = calloc(tile_dim, sizeof(int));
+
   if (!apsp_floyd_warshall_does_tile_have_kth_col_segment(k, tile_dim, tile_i, tile_j)) {
-    *col_segment = NULL;
     return 0;
   }
 
-  *col_segment = calloc(tile_dim, sizeof(int));
   if (*col_segment == NULL) {
     return ENOMEM;
   }
 
   /* We're going to over each row in our tile and pluck out the value that occurs in the kth-col */
-  const int kth_column_offset_within_tile = k - tile_i * tile_dim;
+  const int kth_column_offset_within_tile = k - tile_j * tile_dim;
   for (int row = 0; row < tile_dim; row++) {
     (*col_segment)[row] = tile[row * tile_dim + kth_column_offset_within_tile];
   }
@@ -273,21 +270,18 @@ errno_t apsp_floyd_warshall_get_kth_col_segment(int k, int* tile, int tile_dim, 
 
 errno_t apsp_floyd_warshall_get_kth_row_segment(int k, int* tile, int tile_dim, int tile_i, int tile_j, int** row_segment)
 {
-  /* quickly check that the kth row actually goes through our tile! If it doesn't we should set the row_segment pointer to NULL to let the
-   * caller know.
-   */
+  *row_segment = calloc(tile_dim, sizeof(int));
+
   if (!apsp_floyd_warshall_does_tile_have_kth_row_segment(k, tile_dim, tile_i, tile_j)) {
-    *row_segment = NULL;
     return 0;
   }
 
-  *row_segment = calloc(tile_dim, sizeof(int));
   if (*row_segment == NULL) {
     return ENOMEM;
   }
 
   /* We're going to over each column in our tile and pluck out the value that occurs in the kth-row */
-  const int kth_row_offset_within_tile = (k - tile_j * tile_dim) * tile_dim;
+  const int kth_row_offset_within_tile = (k - tile_i * tile_dim) * tile_dim;
   for (int col = 0; col < tile_dim; col++) {
     (*row_segment)[col] = tile[kth_row_offset_within_tile + col];
   }
@@ -310,10 +304,11 @@ errno_t apsp_floyd_warshall_determine_tile_i_j_which_covers_kth_row_and_col(int 
   return EINVAL;
 }
 
-errno_t apsp_floyd_warshall_recieve_required_kth_row_and_column_segments(int k, int my_rank, int n_vertices, int tile_matrix_dim, int* tile, int tile_dim, int tile_i, int tile_j, MPI_Comm* tile_row_comms, MPI_Comm* tile_col_comms, int** required_kth_row_segment, int** required_kth_col_segment)
+errno_t apsp_floyd_warshall_recieve_required_kth_row_and_column_segments(int k, int my_rank, int n_vertices, int tile_matrix_dim, int* tile, int tile_dim, int tile_i, int tile_j, MPI_Comm tile_world_comm, MPI_Comm* tile_row_comms, MPI_Comm* tile_col_comms, int** required_kth_row_segment, int** required_kth_col_segment)
 {
   MPI_Datatype segment_type;
   MPI_Type_contiguous(tile_dim, MPI_INT, &segment_type);
+  MPI_Type_commit(&segment_type);
 
   int kth_col_and_row_tile_i, kth_col_and_row_tile_j;
   apsp_floyd_warshall_determine_tile_i_j_which_covers_kth_row_and_col(k, tile_matrix_dim, tile_dim, &kth_col_and_row_tile_i, &kth_col_and_row_tile_j);
@@ -332,17 +327,7 @@ errno_t apsp_floyd_warshall_recieve_required_kth_row_and_column_segments(int k, 
     *required_kth_col_segment = calloc(tile_dim, sizeof(int));
   }
 
-  MPI_Group col_group, row_group;
-  MPI_Comm_group(tile_col_comms[tile_j], &col_group);
-  MPI_Comm_group(tile_row_comms[tile_i], &row_group);
-
-  int col_group_rank, row_group_rank;
-  MPI_Group_rank(col_group, &col_group_rank);
-  MPI_Group_rank(row_group, &row_group_rank);
-
-#ifdef DEBUG
-  printf("required_kth_row_and_column_segments: process %i for k = %i has col rank = %i and row rank = %i", my_rank, k, col_group_rank, row_group_rank);
-#endif // DEBUG
+  printf("process %i is going to give out col = [%i, %i] and row = [%i, %i]\n", my_rank, (*required_kth_col_segment)[0], (*required_kth_col_segment)[1], (*required_kth_row_segment)[0], (*required_kth_row_segment)[1]);
 
   MPI_Bcast(*required_kth_row_segment, 1, segment_type, kth_col_and_row_tile_i, tile_col_comms[tile_j]);
   MPI_Bcast(*required_kth_col_segment, 1, segment_type, kth_col_and_row_tile_j, tile_row_comms[tile_i]);
@@ -390,7 +375,7 @@ errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices, int** results
   MPI_Comm* const tile_row_comms = calloc(tile_matrix_dim, sizeof(MPI_Comm));
   MPI_Comm* const tile_col_comms = calloc(tile_matrix_dim, sizeof(MPI_Comm));
   apsp_floyd_warshall_create_tile_world_comm(n_processes, &tile_world_comm);
-  /*MPI_Comm_rank(tile_world_comm, &my_rank);*/
+  MPI_Comm_rank(tile_world_comm, &my_rank);
   apsp_floyd_warshall_create_row_comms(tile_world_comm, n_vertices, tile_dim, tile_matrix_dim, tile_row_comms);
   apsp_floyd_warshall_create_col_comms(tile_world_comm, n_vertices, tile_dim, tile_matrix_dim, tile_col_comms);
 
@@ -406,14 +391,15 @@ errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices, int** results
   printf("apsp_floyd_warshall: process %i is processing tile (%i, %i) = [%i, %i, %i, %i]\n", my_rank, tile_i, tile_j, tile[0], tile[1], tile[2], tile[3]);
 #endif // DEBUG
 
-  for (int k = 0; k < n_vertices; k++) {
-    int* kth_col_segment;
-    int* kth_row_segment;
-    apsp_floyd_warshall_recieve_required_kth_row_and_column_segments(k, my_rank, n_vertices, tile_matrix_dim, tile, tile_dim, tile_i, tile_j, tile_row_comms, tile_col_comms, &kth_row_segment, &kth_col_segment);
+  int k = 1;
+  //for (int k = 0; k < n_vertices; k++) {
+  int* kth_col_segment;
+  int* kth_row_segment;
+  apsp_floyd_warshall_recieve_required_kth_row_and_column_segments(k, my_rank, n_vertices, tile_matrix_dim, tile, tile_dim, tile_i, tile_j, tile_world_comm, tile_row_comms, tile_col_comms, &kth_row_segment, &kth_col_segment);
 #ifdef DEBUG
-    printf("apsp_floyd_warshall: process %i on iteration k = %i recieved col = [%i, %i, %i, %i] and row = [%i, %i, %i, %i]", my_rank, k, kth_col_segment[0], kth_col_segment[1], kth_col_segment[2], kth_col_segment[3], kth_row_segment[0], kth_row_segment[1], kth_row_segment[2], kth_row_segment[3]);
+  printf("apsp_floyd_warshall: process %i on iteration k = %i recieved col = [%i, %i] and row = [%i, %i,]\n", my_rank, k, kth_col_segment[0], kth_col_segment[1], kth_row_segment[0], kth_row_segment[1]);
 #endif // DEBUG
-  }
+  //}
   return 0;
 }
 
