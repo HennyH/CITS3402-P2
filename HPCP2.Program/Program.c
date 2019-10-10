@@ -169,7 +169,10 @@ errno_t apsp_floyd_warshall_gather_tiles_to_root(int* adjacency_matrix, int n_ve
 
   const int n_tiles = tile_matrix_dim * tile_matrix_dim;
   const int n_values = n_vertices * n_vertices;
-  int* values = calloc(n_values, sizeof(int));
+  int* values = NULL;
+  if (my_rank == root) {
+    values = calloc(n_values, sizeof(int));
+  }
 
   const int n_values_in_tile = tile_dim * tile_dim;
   MPI_Gather(tile, n_values_in_tile, MPI_INT, values, n_values_in_tile, MPI_INT, root, comm);
