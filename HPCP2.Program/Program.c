@@ -475,12 +475,13 @@ errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices, int** results
   printf("apsp_floyd_warshall: process %i is processing tile (%i, %i) = [%i, %i, %i, %i]\n", my_rank, tile_i, tile_j, tile[0], tile[1], tile[2], tile[3]);
 #endif // DEBUG
 
+  int from_vertex_start, from_vertex_end, to_vertex_start, to_vertex_end;
+  apsp_floyd_warshall_determine_tile_vertex_domain(tile_dim, tile_i, tile_j, &from_vertex_start, &from_vertex_end, &to_vertex_start, &to_vertex_end);
+
   for (int k = 0; k < n_vertices; k++) {
     int* kth_col_segment;
     int* kth_row_segment;
     apsp_floyd_warshall_recieve_required_kth_row_and_column_segments(k, my_rank, n_vertices, tile_matrix_dim, tile, tile_dim, tile_i, tile_j, tile_world_comm, tile_row_comms, tile_col_comms, &kth_row_segment, &kth_col_segment);
-    int from_vertex_start, from_vertex_end, to_vertex_start, to_vertex_end;
-    apsp_floyd_warshall_determine_tile_vertex_domain(tile_dim, tile_i, tile_j, &from_vertex_start, &from_vertex_end, &to_vertex_start, &to_vertex_end);
 #ifdef DEBUG
     printf("apsp_floyd_warshall: process %i on iteration k = %i recieved col = [%i, %i] and row = [%i, %i]\n", my_rank, k, kth_col_segment[0], kth_col_segment[1], kth_row_segment[0], kth_row_segment[1]);
 #endif // DEBUG
