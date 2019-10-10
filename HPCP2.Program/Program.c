@@ -512,10 +512,14 @@ int main(int argc, char* argv[])
   //                           999, 999,  0, 2,
   //                           999, -1,  999, 0 };
   // example: http://users.cecs.anu.edu.au/~Alistair.Rendell/Teaching/apac_comp3600/module4/all_pairs_shortest_paths.xhtml
-  int adjacency_matrix[] = { 0, 5, 999, 999,
+  /*int adjacency_matrix[] = { 0, 5, 999, 999,
                              999, 0,     1, 999,
                              8, 999,  0, 3,
-                             2, 999,  999, 0 };
+                             2, 999,  999, 0 };*/
+  int adjacency_matrix[] = { 0, 1, 8, 999,
+                            999, 0,     999, 2,
+                            999, 999,  0, 999,
+                            999, 999,  3, 0 };
   apsp_floyd_warshall(adjacency_matrix, 4, NULL);
   MPI_Finalize();
   return 0;
