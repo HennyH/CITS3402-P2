@@ -8,6 +8,14 @@ Follow the instructions [here](https://blogs.technet.microsoft.com/windowshpc/20
 
 Install [CodeMaid](https://marketplace.visualstudio.com/items?itemName=SteveCadwallader.CodeMaid) and after it is installed enable formatting on save by clicking `Extensions > Code Main > Automatic Cleanup On Save ...`.
 
+# Todo:
+
+- Merge the get_kth_col/get_kth_row into one method and have it check set the buffer to all INT_NULLs if it doesn't exist (and then make sure it's freed and allocated once in the outer loop).
+- Check all allocs/callocs are freed.
+- Look for any TODOs.
+- Do file I/O.
+- Write python script to test program.
+
 # References
 
 1. [Parallelizing Floyd-Warshall](https://gkaracha.github.io/papers/floyd-warshall.pdf)
