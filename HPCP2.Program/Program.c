@@ -478,20 +478,23 @@ errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices, int** results
   const int tile_matrix_dim = apsp_floyd_warshall_calc_tile_matrix_dim(n_vertices, n_available_processes);
   const int tile_dim = apsp_floyd_warshall_calc_tile_dim(n_vertices, tile_matrix_dim);
   const int n_processes = tile_matrix_dim * tile_matrix_dim;
+#ifdef DEBUG
   if (my_rank == 0) {
     printf("tile_dim=%i, tile_matrix_dim=%i, n_aval_processes=%i, n_processes=%i\n", tile_dim, tile_matrix_dim, n_available_processes, n_processes);
-    fflush(stdout);
   }
+#endif // DEBUG
 
   /* If the process would have no work to do exit the function! Remember that our ranks are 0 indexed hence the >=! */
   if (my_rank >= n_processes) {
-    //printf("apsp_floyd_warshall: process %i exiting and not participating in calculation\n", my_rank);
-    fflush(stdout);
+#ifdef DEBUG
+    printf("apsp_floyd_warshall: process %i exiting and not participating in calculation\n", my_rank);
+#endif // DEBUG
     return 0;
   }
 
-  //printf("apsp_floyd_warshall: process %i participating in calculation\n", my_rank);
-  fflush(stdout);
+#ifdef DEBUG
+  printf("apsp_floyd_warshall: process %i participating in calculation\n", my_rank);
+#endif // DEBUG
 
   const int tile_size = tile_dim * tile_dim;
   int* const tile = calloc(tile_size, sizeof(int));
