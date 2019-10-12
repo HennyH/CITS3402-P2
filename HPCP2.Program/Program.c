@@ -241,12 +241,12 @@ errno_t apsp_floyd_warshall_create_row_comms(MPI_Comm tile_world_comm, int n_ver
   MPI_Group tile_world_group;
   MPI_Comm_group(tile_world_comm, &tile_world_group);
 
+  /* This array will contain the _ranks_ of the processes (within the tile world) which are processing a tile along the current row. */
+  int* ranks_in_row = calloc(tile_matrix_dim, sizeof(int));
+  if (ranks_in_row == NULL) {
+    return ENOMEM;
+  }
   for (int row = 0; row < tile_matrix_dim; row++) {
-    /* This array will contain the _ranks_ of the processes (within the tile world) which are processing a tile along the current row. */
-    int* ranks_in_row = calloc(tile_matrix_dim, sizeof(int));
-    if (ranks_in_row == NULL) {
-      return ENOMEM;
-    }
     for (int rank = 0; rank < n_tiles; rank++) {
       int tile_i, tile_j;
       apsp_floyd_warshall_tile_determine_i_j_for_process_rank(rank, n_vertices, tile_dim, &tile_i, &tile_j);
@@ -262,7 +262,6 @@ errno_t apsp_floyd_warshall_create_row_comms(MPI_Comm tile_world_comm, int n_ver
     /* Now that we know the ranks of the tiles which occur in the row we create a communicator which includes them all derived from tile world. */
     MPI_Group tile_row_group;
     int status = MPI_Group_incl(tile_world_group, tile_matrix_dim, ranks_in_row, &tile_row_group);
-    free(ranks_in_row);
     MPI_Comm* tile_row_comm = tile_row_comms + row;
     MPI_Comm_create(tile_world_comm, tile_row_group, tile_row_comm);
     if (*tile_row_comm == MPI_COMM_NULL) {
@@ -271,6 +270,7 @@ errno_t apsp_floyd_warshall_create_row_comms(MPI_Comm tile_world_comm, int n_ver
     }
   }
 
+  free(ranks_in_row);
   return 0;
 }
 
@@ -282,12 +282,12 @@ errno_t apsp_floyd_warshall_create_col_comms(MPI_Comm tile_world_comm, int n_ver
   MPI_Group tile_world_group;
   MPI_Comm_group(tile_world_comm, &tile_world_group);
 
+  /* This array will contain the _ranks_ of the processes (within the tile world) which are processing a tile along the current col. */
+  int* ranks_in_col = calloc(tile_matrix_dim, sizeof(int));
+  if (ranks_in_col == NULL) {
+    return ENOMEM;
+  }
   for (int col = 0; col < tile_matrix_dim; col++) {
-    /* This array will contain the _ranks_ of the processes (within the tile world) which are processing a tile along the current col. */
-    int* ranks_in_col = calloc(tile_matrix_dim, sizeof(int));
-    if (ranks_in_col == NULL) {
-      return ENOMEM;
-    }
     for (int rank = 0; rank < n_tiles; rank++) {
       int tile_i, tile_j;
       apsp_floyd_warshall_tile_determine_i_j_for_process_rank(rank, n_vertices, tile_dim, &tile_i, &tile_j);
@@ -303,7 +303,6 @@ errno_t apsp_floyd_warshall_create_col_comms(MPI_Comm tile_world_comm, int n_ver
     /* Now that we know the ranks of the tiles which occur in the col we create a communicator which includes them all derived from tile world. */
     MPI_Group tile_col_group;
     MPI_Group_incl(tile_world_group, tile_matrix_dim, ranks_in_col, &tile_col_group);
-    free(ranks_in_col);
     MPI_Comm* tile_col_comm = tile_col_comms + col;
     MPI_Comm_create(tile_world_comm, tile_col_group, tile_col_comm);
     if (*tile_col_comm == MPI_COMM_NULL) {
@@ -312,6 +311,7 @@ errno_t apsp_floyd_warshall_create_col_comms(MPI_Comm tile_world_comm, int n_ver
     }
   }
 
+  free(ranks_in_col);
   return 0;
 }
 
@@ -416,6 +416,17 @@ errno_t apsp_floyd_warshall_recieve_required_kth_row_and_column_segments(int k, 
   return 0;
 }
 
+void debug_print_matrix(char* const message, int* values, int dimension)
+{
+  printf("%s\n\t", message);
+  for (int row = 0; row < dimension; row++) {
+    for (int col = 0; col < dimension; col++) {
+      printf(" %5i", values[row * dimension + col]);
+    }
+    printf("\n\t");
+  }
+}
+
 errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices, int** results)
 {
   int n_available_processes, my_rank;
@@ -503,7 +514,7 @@ errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices, int** results
   apsp_floyd_warshall_gather_tiles_to_root(adjacency_matrix, n_vertices, tile_dim, tile_matrix_dim, 0, tile, tile_world_comm);
 
   if (my_rank == 0) {
-    printf("apsp_floyd_warshall: final result:\n\t%i, %i, %i, %i\n\t%i, %i, %i, %i\n\t%i, %i, %i, %i\n\t%i, %i, %i, %i", adjacency_matrix[0], adjacency_matrix[1], adjacency_matrix[2], adjacency_matrix[3], adjacency_matrix[4], adjacency_matrix[5], adjacency_matrix[6], adjacency_matrix[7], adjacency_matrix[8], adjacency_matrix[9], adjacency_matrix[10], adjacency_matrix[11], adjacency_matrix[12], adjacency_matrix[13], adjacency_matrix[14], adjacency_matrix[15]);
+    debug_print_matrix("apsp_floyd_warshall: final result =", adjacency_matrix, n_vertices);
   }
 
   return 0;
@@ -538,11 +549,12 @@ int main(int argc, char* argv[])
                              999, 0,     1, 999,
                              8, 999,  0, 3,
                              2, 999,  999, 0 };*/
-  int adjacency_matrix[] = { 0, 1, 8, 999,
-                            999, 0,     999, 2,
-                            999, 999,  0, 999,
-                            999, 999,  3, 0 };
-  apsp_floyd_warshall(adjacency_matrix, 4, NULL);
+  int adjacency_matrix[] = { 0, 1, 8, 999, 7,
+                            999, 0,     999, 2, 2,
+                            999, 999,  0, 999, 1,
+                            999, 999,  3, 0, 9,
+                            6, 999, 3, 0, 9 };
+  apsp_floyd_warshall(adjacency_matrix, 5, NULL);
   MPI_Finalize();
   return 0;
 }
