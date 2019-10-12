@@ -7,7 +7,7 @@
 #include <errno.h>
 #include <stdarg.h>
 
-#define INT_INFINITY -1
+#define INT_INFINITY 9999
 #define INT_NULL -2
 
 /// <summary>
@@ -442,7 +442,13 @@ void debug_print_matrix(char* const message, int* values, int rows, int cols, ..
   printf("\n\t");
   for (int row = 0; row < rows; row++) {
     for (int col = 0; col < cols; col++) {
-      printf(" %5i", values[row * cols + col]);
+      const int value = values[row * cols + col];
+      if (value >= INT_INFINITY) {
+        printf(" %5s", "(><)");
+      }
+      else {
+        printf(" %5i", value);
+      }
     }
     if (row == rows - 1) {
       printf("\n");
@@ -554,12 +560,6 @@ errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices, int** results
 
   apsp_floyd_warshall_gather_tiles_to_root(adjacency_matrix, n_vertices, tile_dim, tile_matrix_dim, 0, tile, tile_world_comm);
 
-#ifdef DEBUG
-  if (my_rank == 0) {
-    debug_print_matrix("apsp_floyd_warshall: final result =", adjacency_matrix, n_vertices, n_vertices);
-  }
-#endif // DEBUG
-
   return 0;
 }
 
@@ -588,16 +588,20 @@ int main(int argc, char* argv[])
   //                           999, 999,  0, 2,
   //                           999, -1,  999, 0 };
   // example: http://users.cecs.anu.edu.au/~Alistair.Rendell/Teaching/apac_comp3600/module4/all_pairs_shortest_paths.xhtml
-  /*int adjacency_matrix[] = { 0, 5, 999, 999,
-                             999, 0,     1, 999,
-                             8, 999,  0, 3,
-                             2, 999,  999, 0 };*/
-  int adjacency_matrix[] = { 0, 1, 8, 999, 7,
-                            999, 0,     999, 2, 2,
-                            999, 999,  0, 999, 1,
-                            999, 999,  3, 0, 9,
-                            6, 999, 3, 0, 9 };
-  apsp_floyd_warshall(adjacency_matrix, 5, NULL);
+  int adjacency_matrix[] = { 0, INT_INFINITY, INT_INFINITY, INT_INFINITY,
+                             INT_INFINITY, 0,     1, INT_INFINITY,
+                             8, INT_INFINITY,  0, 3,
+                             2, INT_INFINITY,  INT_INFINITY, 0 };
+  //int adjacency_matrix[] = { 0, 1, 8, 999, 7,
+  //                          999, 0,     999, 2, 2,
+  //                          999, 999,  0, 999, 1,
+  //                          999, 999,  3, 0, 9,
+  //                          6, 999, 3, 0, 9 };
+  apsp_floyd_warshall(adjacency_matrix, 4, NULL);
   MPI_Finalize();
+
+#ifdef DEBUG
+  debug_print_matrix("apsp_floyd_warshall: final result =", adjacency_matrix, 4, 4);
+#endif // DEBUG
   return 0;
 }
