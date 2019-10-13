@@ -1,38 +1,49 @@
-
-"""
-Reference implementation of the floyd warshall aglorithim. Useful for generating test cases for the parallel
-implementation.
-"""
-
+import sys
+import os
+import unittest
+import subprocess
+import io
+from math import sqrt, ceil
+from tempfile import TemporaryFile
+from parameterized import parameterized
 from itertools import chain
-from math import log10, floor, inf, isinf
 
-def floyd_warshall_solve(adjacency_matrix):
-    """Solve in-place the all-pairs shortest path for a 2D adjacency matrix."""
-    n_vertices = len(adjacency_matrix)
-    for k in range(n_vertices):
-        for i in range(n_vertices):
-            for j in range(n_vertices):
-                if adjacency_matrix[i][j] > adjacency_matrix[i][k] + adjacency_matrix[k][j]:
-                    adjacency_matrix[i][j] = adjacency_matrix[i][k] + adjacency_matrix[k][j]
-    return adjacency_matrix
+from floyd_warshall import make_adjacency_matrix, floyd_warshall_solve
 
-def make_adjacency_matrix(values, n):
-    """Make a 2D adjacency matrix of dimension `n` from the 1D values vector."""
-    return [values[i:i+n] for i in range(0, n ** 2, n)]
-
-def print_adjacency_matrix(adjacency_matrix):
-    """Pretty print an adjacency matrix."""
-    max_distance = max(1 if isinf(d) else d for d in chain.from_iterable(adjacency_matrix))
-    max_distance_digits = int(floor(log10(max_distance)) + 1)
-    print("\n".join(
-        " ".join("∞" if isinf(d) else f"{{:{max_distance_digits}}}".format(d) for d in row)
-        for row in adjacency_matrix
-    ))
-
-if __name__ == "__main__":
-    print_adjacency_matrix(floyd_warshall_solve(make_adjacency_matrix(
-       [
+INF = 9999
+MPI_EXEC = os.path.expandvars("${MSMPI_BIN}\mpiexec.exe")
+PROGRAM = os.path.join(os.path.dirname(__file__),
+                       "../x64/Release/HPCP2.Program.exe")
+N_THREADS = [
+   "1",
+   "2",
+   "3",
+   "4",
+   "8"
+   "10",
+   "16"
+]
+TEST_MATRICES = [
+    ("wikipedia_example", [
+        0, INF, 2, INF,
+        4, 0, 3, INF,
+        INF, INF, 0, 2,
+        INF, 1, INF, 0
+    ]),
+    ("anu_example_1", [
+       0, INF, INF, INF,
+       INF, 0, 1, INF,
+       8, INF, 0, 3,
+       2, INF, INF, 0
+    ]),
+    ("anu_example_2", [
+      0, 1, 8, INF, 7,
+      INF, 0, INF, 2, 2,
+      INF, INF, 0, INF, 1,
+      INF, INF, 3, 0, 9,
+      6, INF, 3, 0, 9
+    ]),
+    ("uwa_example_32", [
        21, 24, 13, 4, 6, 28, 10, 7, 29, 13, 12, 17, 27, 17, 0, 15, 30, 24, 27, 20, 3, 10, 21, 21, 10, 28, 6, 8, 25, 27, 21, 15,
        19, 2, 19, 25, 31, 29, 0, 28, 11, 12, 14, 6, 29, 14, 21, 27, 6, 17, 15, 9, 27, 5, 31, 5, 1, 5, 14, 26, 0, 3, 9, 19,
        5, 28, 12, 4, 26, 12, 1, 5, 24, 15, 11, 22, 29, 1, 17, 3, 18, 1, 12, 13, 6, 11, 18, 7, 16, 0, 1, 16, 3, 11, 3, 9,
@@ -65,6 +76,43 @@ if __name__ == "__main__":
        10, 17, 19, 28, 20, 12, 26, 25, 20, 21, 4, 12, 22, 21, 4, 12, 31, 12, 31, 5, 23, 13, 11, 10, 17, 9, 12, 26, 27, 16, 14, 5,
        1, 1, 1, 21, 13, 28, 14, 1, 17, 18, 13, 7, 7, 18, 19, 6, 30, 19, 11, 21, 0, 22, 31, 17, 31, 11, 11, 26, 27, 25, 0, 28,
        27, 1, 17, 8, 29, 31, 10, 14, 17, 23, 22, 24, 9, 9, 31, 7, 28, 10, 29, 28, 1, 28, 14, 0, 8, 25, 27, 3, 19, 27, 0, 14
-    ],
-        32
-    )))
+    ])
+]
+TEST_SCENARIOS = list(chain.from_iterable([
+    [(f"{t}t_{n}", t, m) for n, m in TEST_MATRICES]
+    for t in N_THREADS
+]))
+
+def int_bytes(i: int):
+    return i.to_bytes(4, sys.byteorder, signed=False)
+
+class Test_floyd_warshall(unittest.TestCase):
+    @parameterized.expand(TEST_SCENARIOS)
+    def test_matrix(self, name, threads, matrix):
+        n_vertices = int(sqrt(len(matrix)))
+        with TemporaryFile(mode="wb", delete=False) as tmp_file:
+            tmp_file.write(int_bytes(n_vertices))
+            for d in matrix:
+                tmp_file.write(int_bytes(d))
+            tmp_file.close()
+            try:
+                result = subprocess.run(
+                    [MPI_EXEC, "-n", threads, PROGRAM, tmp_file.name],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True
+                )
+            finally:
+                os.unlink(tmp_file.name)
+        if result.returncode != 0:
+            print(result.stderr, file=sys.stderr)
+            result.check_returncode()
+        _, *actual_values = list(map(int, result.stdout.split()))
+        expected_matrix = \
+            floyd_warshall_solve(make_adjacency_matrix(matrix, n_vertices))
+        expected_values = list(chain.from_iterable(expected_matrix))
+        self.assertListEqual(actual_values, expected_values)
+
+if __name__ == '__main__':
+    unittest.main()
+

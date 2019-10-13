@@ -18,11 +18,7 @@
 /// <returns>The dimension of the tiles.</returns>
 inline int apsp_floyd_warshall_calc_tile_matrix_dim(int n_vertices, int n_available_processes)
 {
-  /*
-  * TODO: Explain the logic here.
-  */
-  const int max_available_parallelism = min(n_vertices * n_vertices, n_available_processes);
-  return (int)floor(log2(max_available_parallelism));
+  return (int)floor(sqrt(min(n_vertices, n_available_processes)));
 }
 
 /// <summary>
@@ -88,7 +84,7 @@ errno_t apsp_floyd_warshall_tile_determine_i_j_for_process_rank(int rank, int ti
 /// <param name="tile_j">out: The recieved tile_j.</param>
 /// <param name="tile_buffer">inout: The buffer to store the recieved tile.</param>
 /// <returns>An error code.</returns>
-errno_t apsp_floyd_warshall_distribute_tiles(int* adjacency_matrix, int n_vertices, int tile_dim, int tile_matrix_dim, int root, MPI_Comm comm, int* tile_i, int* tile_j, int* tile_buffer)
+errno_t apsp_floyd_warshall_distribute_tiles(int* adjacency_matrix, int n_vertices, int tile_dim, int tile_matrix_dim, int root, MPI_Comm comm, MPI_Datatype tile_type, int* tile_i, int* tile_j, int* tile_buffer)
 {
   int n_processes, my_rank;
   MPI_Comm_rank(comm, &my_rank);
@@ -128,9 +124,6 @@ errno_t apsp_floyd_warshall_distribute_tiles(int* adjacency_matrix, int n_vertic
     }
   }
 
-  MPI_Datatype tile_type;
-  MPI_Type_vector(1, tile_size, tile_size, MPI_INT, &tile_type);
-  MPI_Type_commit(&tile_type);
   MPI_Scatter(tiles, 1, tile_type, tile_buffer, tile_size, MPI_INT, root, comm);
 
   if (my_rank == root && tiles != NULL) {
@@ -233,10 +226,10 @@ errno_t apsp_floyd_warshall_create_tile_world_comm(int n_processes, MPI_Comm* ti
 
   MPI_Group tile_group;
   MPI_Group_incl(world_group, n_processes, ranks, &tile_group);
-  free(ranks);
   MPI_Comm_create(MPI_COMM_WORLD, tile_group, tile_world_comm);
+  free(ranks);
   if (*tile_world_comm == MPI_COMM_NULL) {
-    printf("apsp_floyd_warshall_create_tile_world_comm: failed to create tile comm world.");
+    fprintf(stderr, "apsp_floyd_warshall_create_tile_world_comm: failed to create tile comm world.");
     return EINVAL;
   }
 
@@ -279,7 +272,7 @@ errno_t apsp_floyd_warshall_create_row_comms(MPI_Comm tile_world_comm, int n_ver
     MPI_Comm* tile_row_comm = tile_row_comms + row;
     status = MPI_Comm_create(tile_world_comm, tile_row_group, tile_row_comm);
     if (i_am_in_row && *tile_row_comm == MPI_COMM_NULL) {
-      printf("apsp_floyd_warshall_create_row_comms: process %i failed to create row comm world for row %i.\n", my_rank, row);
+      fprintf(stderr, "apsp_floyd_warshall_create_row_comms: process %i failed to create row comm world for row %i.\n", my_rank, row);
       return EINVAL;
     }
   }
@@ -323,7 +316,7 @@ errno_t apsp_floyd_warshall_create_col_comms(MPI_Comm tile_world_comm, int n_ver
     MPI_Comm* tile_col_comm = tile_col_comms + col;
     MPI_Comm_create(tile_world_comm, tile_col_group, tile_col_comm);
     if (i_am_in_col && *tile_col_comm == MPI_COMM_NULL) {
-      printf("apsp_floyd_warshall_create_col_comms: failed to create col comm world for col %i.\n", col);
+      fprintf(stderr, "apsp_floyd_warshall_create_col_comms: failed to create col comm world for col %i.\n", col);
       return EINVAL;
     }
   }
@@ -350,20 +343,17 @@ inline int apsp_floyd_warshall_does_tile_have_kth_row_segment(int k, int tile_di
 
 errno_t apsp_floyd_warshall_get_kth_col_segment(int k, int* tile, int tile_dim, int tile_i, int tile_j, int** col_segment)
 {
-  *col_segment = calloc(tile_dim, sizeof(int));
-
   if (!apsp_floyd_warshall_does_tile_have_kth_col_segment(k, tile_dim, tile_i, tile_j)) {
-    return 0;
+    for (int i = 0; i < tile_dim; i++) {
+      (*col_segment)[i] = 0;
+    }
   }
-
-  if (*col_segment == NULL) {
-    return ENOMEM;
-  }
-
-  /* We're going to over each row in our tile and pluck out the value that occurs in the kth-col */
-  const int kth_column_offset_within_tile = k - tile_j * tile_dim;
-  for (int row = 0; row < tile_dim; row++) {
-    (*col_segment)[row] = tile[row * tile_dim + kth_column_offset_within_tile];
+  else {
+    /* We're going to over each row in our tile and pluck out the value that occurs in the kth-col */
+    const int kth_column_offset_within_tile = k - tile_j * tile_dim;
+    for (int row = 0; row < tile_dim; row++) {
+      (*col_segment)[row] = tile[row * tile_dim + kth_column_offset_within_tile];
+    }
   }
 
   return 0;
@@ -371,20 +361,17 @@ errno_t apsp_floyd_warshall_get_kth_col_segment(int k, int* tile, int tile_dim, 
 
 errno_t apsp_floyd_warshall_get_kth_row_segment(int k, int* tile, int tile_dim, int tile_i, int tile_j, int** row_segment)
 {
-  *row_segment = calloc(tile_dim, sizeof(int));
-
   if (!apsp_floyd_warshall_does_tile_have_kth_row_segment(k, tile_dim, tile_i, tile_j)) {
-    return 0;
+    for (int i = 0; i < tile_dim; i++) {
+      (*row_segment)[i] = 0;
+    }
   }
-
-  if (*row_segment == NULL) {
-    return ENOMEM;
-  }
-
-  /* We're going to over each column in our tile and pluck out the value that occurs in the kth-row */
-  const int kth_row_offset_within_tile = (k - tile_i * tile_dim) * tile_dim;
-  for (int col = 0; col < tile_dim; col++) {
-    (*row_segment)[col] = tile[kth_row_offset_within_tile + col];
+  else {
+    /* We're going to over each column in our tile and pluck out the value that occurs in the kth-row */
+    const int kth_row_offset_within_tile = (k - tile_i * tile_dim) * tile_dim;
+    for (int col = 0; col < tile_dim; col++) {
+      (*row_segment)[col] = tile[kth_row_offset_within_tile + col];
+    }
   }
 
   return 0;
@@ -405,65 +392,55 @@ errno_t apsp_floyd_warshall_determine_tile_i_j_which_covers_kth_row_and_col(int 
   return EINVAL;
 }
 
-errno_t apsp_floyd_warshall_recieve_required_kth_row_and_column_segments(int k, int my_rank, int n_vertices, int tile_matrix_dim, int* tile, int tile_dim, int tile_i, int tile_j, MPI_Comm tile_world_comm, MPI_Comm* tile_row_comms, MPI_Comm* tile_col_comms, int** required_kth_row_segment, int** required_kth_col_segment)
+errno_t apsp_floyd_warshall_recieve_required_kth_row_and_column_segments(int k, int my_rank, int n_vertices, int tile_matrix_dim, int* tile, int tile_dim, int tile_i, int tile_j, MPI_Comm tile_world_comm, MPI_Comm* tile_row_comms, MPI_Comm* tile_col_comms, MPI_Datatype segment_type, int** required_kth_row_segment, int** required_kth_col_segment)
 {
-  MPI_Datatype segment_type;
-  MPI_Type_contiguous(tile_dim, MPI_INT, &segment_type);
-  MPI_Type_commit(&segment_type);
-
   int kth_col_and_row_tile_i, kth_col_and_row_tile_j;
   apsp_floyd_warshall_determine_tile_i_j_which_covers_kth_row_and_col(k, tile_matrix_dim, tile_dim, &kth_col_and_row_tile_i, &kth_col_and_row_tile_j);
 
-  if (tile_i == kth_col_and_row_tile_i) {
-    apsp_floyd_warshall_get_kth_row_segment(k, tile, tile_dim, tile_i, tile_j, required_kth_row_segment);
-  }
-  else {
-    *required_kth_row_segment = calloc(tile_dim, sizeof(int));
-  }
-
-  if (tile_j == kth_col_and_row_tile_j) {
-    apsp_floyd_warshall_get_kth_col_segment(k, tile, tile_dim, tile_i, tile_j, required_kth_col_segment);
-  }
-  else {
-    *required_kth_col_segment = calloc(tile_dim, sizeof(int));
-  }
+  apsp_floyd_warshall_get_kth_row_segment(k, tile, tile_dim, tile_i, tile_j, required_kth_row_segment);
+  apsp_floyd_warshall_get_kth_col_segment(k, tile, tile_dim, tile_i, tile_j, required_kth_col_segment);
 
   MPI_Bcast(*required_kth_row_segment, 1, segment_type, kth_col_and_row_tile_i, tile_col_comms[tile_j]);
   MPI_Bcast(*required_kth_col_segment, 1, segment_type, kth_col_and_row_tile_j, tile_row_comms[tile_i]);
   return 0;
 }
 
-void debug_print_matrix(char* const message, int* values, int rows, int cols, ...)
+void debug_print_matrix(FILE* file, char* const message, int* values, int rows, int cols, ...)
 {
   va_list fmt_args;
   va_start(fmt_args, cols);
 
-  vprintf(message, fmt_args);
-  printf("\n\t");
+  vfprintf(file, message, fmt_args);
+  fprintf(file, "\n\t");
   for (int row = 0; row < rows; row++) {
     for (int col = 0; col < cols; col++) {
       const int value = values[row * cols + col];
       if (value >= INT_INFINITY) {
-        printf(" %5s", "(><)");
+        fprintf(file, " %5s", "(><)");
       }
       else {
-        printf(" %5i", value);
+        fprintf(file, " %5i", value);
       }
     }
     if (row == rows - 1) {
-      printf("\n");
+      fprintf(file, "\n");
     }
     else {
-      printf("\n\t");
+      fprintf(file, "\n\t");
     }
   }
 }
 
-errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices, int** results)
+errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices)
 {
   int n_available_processes, my_rank;
   MPI_Comm_size(MPI_COMM_WORLD, &n_available_processes);
   MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+  /* Only the root process reads the file but all processes need the number of verticies during the setup portion.
+   * Each process recieves their portion of the adjacency matrix later.
+   */
+  MPI_Bcast(&n_vertices, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
   /* In the non-parallelized version we construct a adjacancy matrix `d` of size `n_vertices` x `n_vertices`. This adjacancy matrix
    * contains the upper bound of the distance between two particular verticies i and j in the cell located at (row=i, col=j). These estimates
@@ -480,20 +457,20 @@ errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices, int** results
   const int n_processes = tile_matrix_dim * tile_matrix_dim;
 #ifdef DEBUG
   if (my_rank == 0) {
-    printf("tile_dim=%i, tile_matrix_dim=%i, n_aval_processes=%i, n_processes=%i\n", tile_dim, tile_matrix_dim, n_available_processes, n_processes);
+    fprintf(stderr, "n_verts=%i, tile_dim=%i, tile_matrix_dim=%i, n_aval_processes=%i, n_processes=%i\n", n_vertices, tile_dim, tile_matrix_dim, n_available_processes, n_processes);
   }
 #endif // DEBUG
 
   /* If the process would have no work to do exit the function! Remember that our ranks are 0 indexed hence the >=! */
   if (my_rank >= n_processes) {
 #ifdef DEBUG
-    printf("apsp_floyd_warshall: process %i exiting and not participating in calculation\n", my_rank);
+    fprintf(stderr, "apsp_floyd_warshall: process %i exiting and not participating in calculation\n", my_rank);
 #endif // DEBUG
     return 0;
   }
 
 #ifdef DEBUG
-  printf("apsp_floyd_warshall: process %i participating in calculation\n", my_rank);
+  fprintf(stderr, "apsp_floyd_warshall: process %i participating in calculation\n", my_rank);
 #endif // DEBUG
 
   const int tile_size = tile_dim * tile_dim;
@@ -516,28 +493,37 @@ errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices, int** results
   apsp_floyd_warshall_create_col_comms(tile_world_comm, n_vertices, tile_dim, tile_matrix_dim, tile_col_comms);
   MPI_Comm_rank(tile_world_comm, &my_rank);
 
+  MPI_Datatype tile_type;
+  MPI_Type_vector(1, tile_size, tile_size, MPI_INT, &tile_type);
+  MPI_Type_commit(&tile_type);
+
+  MPI_Datatype segment_type;
+  MPI_Type_contiguous(tile_dim, MPI_INT, &segment_type);
+  MPI_Type_commit(&segment_type);
+
   /* This is the initial communication stage which distributes the tiles to each process. Underneath this method uses a collective
    * scatter communication and hence all processes should call the method.
    */
-  apsp_floyd_warshall_distribute_tiles(adjacency_matrix, n_vertices, tile_dim, tile_matrix_dim, 0, tile_world_comm, &tile_i, &tile_j, tile);
+  apsp_floyd_warshall_distribute_tiles(adjacency_matrix, n_vertices, tile_dim, tile_matrix_dim, 0, tile_world_comm, tile_type, &tile_i, &tile_j, tile);
 
 #ifdef DEBUG
   if (my_rank == 0) {
-    printf("apsp_floyd_warshall: scattered the %i dimension displacement matrix into %i tiles of dimension %i\n", n_vertices, n_processes, tile_dim);
+    fprintf(stderr, "apsp_floyd_warshall: scattered the %i dimension displacement matrix into %i tiles of dimension %i\n", n_vertices, n_processes, tile_dim);
   }
-  debug_print_matrix("apsp_floyd_warshall: process %i is processing tile (%i, %i) =", tile, tile_dim, tile_dim, my_rank, tile_i, tile_j);
+  debug_print_matrix(stderr, "apsp_floyd_warshall: process %i is processing tile (%i, %i) =", tile, tile_dim, tile_dim, my_rank, tile_i, tile_j);
 #endif // DEBUG
 
   int from_vertex_start, from_vertex_end, to_vertex_start, to_vertex_end;
   apsp_floyd_warshall_determine_tile_vertex_domain(n_vertices, tile_dim, tile_i, tile_j, &from_vertex_start, &from_vertex_end, &to_vertex_start, &to_vertex_end);
 
+  int* kth_col_segment = calloc(tile_dim, sizeof(int));
+  int* kth_row_segment = calloc(tile_dim, sizeof(int));
+
   for (int k = 0; k < n_vertices; k++) {
-    int* kth_col_segment;
-    int* kth_row_segment;
-    apsp_floyd_warshall_recieve_required_kth_row_and_column_segments(k, my_rank, n_vertices, tile_matrix_dim, tile, tile_dim, tile_i, tile_j, tile_world_comm, tile_row_comms, tile_col_comms, &kth_row_segment, &kth_col_segment);
+    apsp_floyd_warshall_recieve_required_kth_row_and_column_segments(k, my_rank, n_vertices, tile_matrix_dim, tile, tile_dim, tile_i, tile_j, tile_world_comm, tile_row_comms, tile_col_comms, segment_type, &kth_row_segment, &kth_col_segment);
 #ifdef DEBUG
-    debug_print_matrix("apsp_floyd_warshall: process %i on iteration k = %i recieved col =", kth_col_segment, 1, tile_dim, my_rank, k);
-    debug_print_matrix("apsp_floyd_warshall: process %i on iteration k = %i recieved row =", kth_row_segment, 1, tile_dim, my_rank, k);
+    debug_print_matrix(stderr, "apsp_floyd_warshall: process %i on iteration k = %i recieved col =", kth_col_segment, 1, tile_dim, my_rank, k);
+    debug_print_matrix(stderr, "apsp_floyd_warshall: process %i on iteration k = %i recieved row =", kth_row_segment, 1, tile_dim, my_rank, k);
 #endif // DEBUG
     /* from vertex is the 'row' */
     for (int from_vertex = from_vertex_start; from_vertex < from_vertex_end; from_vertex++) {
@@ -549,19 +535,25 @@ errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices, int** results
         const int d_kj = kth_row_segment[to_vertex - to_vertex_start];
         const int min_d_ij = min(d_ij, d_ik + d_kj);
 #ifdef DEBUG
-        printf("apsp_floyd_warshall: process %i on iteration k = %i performing calc: (tile index=%i) d_%i,%i = min(d_%i,%i | d_%i,%i + d_%i,%i) = min(%i, %i + %i) = %i\n", my_rank, k, d_ij_tile_index, from_vertex, to_vertex, from_vertex, to_vertex, from_vertex, k, k, to_vertex, d_ij, d_ik, d_kj, min_d_ij);
+        fprintf(stderr, "apsp_floyd_warshall: process %i on iteration k = %i performing calc: (tile index=%i) d_%i,%i = min(d_%i,%i | d_%i,%i + d_%i,%i) = min(%i, %i + %i) = %i\n", my_rank, k, d_ij_tile_index, from_vertex, to_vertex, from_vertex, to_vertex, from_vertex, k, k, to_vertex, d_ij, d_ik, d_kj, min_d_ij);
 #endif // DEBUG
         tile[d_ij_tile_index] = min_d_ij;
       }
     }
   }
 
+  free(kth_col_segment);
+  free(kth_row_segment);
+
 #ifdef DEBUG
-  printf("apsp_floyd_warshall: process %i finished calculating tile", my_rank);
-  debug_print_matrix("apsp_floyd_warshall: process %i is calculated tile (%i, %i)", tile, tile_dim, tile_dim, my_rank, tile_i, tile_j);
+  fprintf(stderr, "apsp_floyd_warshall: process %i finished calculating tile", my_rank);
+  debug_print_matrix(stderr, "apsp_floyd_warshall: process %i is calculated tile (%i, %i)", tile, tile_dim, tile_dim, my_rank, tile_i, tile_j);
 #endif // DEBUG
 
   apsp_floyd_warshall_gather_tiles_to_root(adjacency_matrix, n_vertices, tile_dim, tile_matrix_dim, 0, tile, tile_world_comm);
+
+  MPI_Type_free(&tile_type);
+  MPI_Type_free(&segment_type);
 
   return 0;
 }
@@ -572,8 +564,8 @@ void pause_to_allow_attachment()
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   if (rank == 0) {
     char answer[1];
-    fprintf(stdout, "Press any key to continue...");
-    fflush(stdout);
+    fprintf(stderr, "Press any key to continue...");
+    fflush(stderr);
     fread_s(answer, sizeof(char) * _countof(answer), sizeof(char), _countof(answer), stdin);
   }
   MPI_Barrier(MPI_COMM_WORLD);
@@ -582,29 +574,84 @@ void pause_to_allow_attachment()
 int main(int argc, char* argv[])
 {
   MPI_Init(&argc, &argv);
+
 #ifdef DEBUG
   pause_to_allow_attachment();
 #endif // DEBUG
-  // example: https://en.wikipedia.org/wiki/Floyd%E2%80%93Warshall_algorithm
-  //int adjacency_matrix[] = { 0, 999, -2, 999,
-  //                           4, 0,     3, 999,
-  //                           999, 999,  0, 2,
-  //                           999, -1,  999, 0 };
-  // example: http://users.cecs.anu.edu.au/~Alistair.Rendell/Teaching/apac_comp3600/module4/all_pairs_shortest_paths.xhtml
-  int adjacency_matrix[] = { 0, INT_INFINITY, INT_INFINITY, INT_INFINITY,
-                             INT_INFINITY, 0,     1, INT_INFINITY,
-                             8, INT_INFINITY,  0, 3,
-                             2, INT_INFINITY,  INT_INFINITY, 0 };
-  //int adjacency_matrix[] = { 0, 1, 8, 999, 7,
-  //                          999, 0,     999, 2, 2,
-  //                          999, 999,  0, 999, 1,
-  //                          999, 999,  3, 0, 9,
-  //                          6, 999, 3, 0, 9 };
-  apsp_floyd_warshall(adjacency_matrix, 4, NULL);
-  MPI_Finalize();
+
+  if (argc > 3) {
+    fprintf(stderr, "Expected usage: [input:stdin] [output:stdout]");
+    return 1;
+  }
+  char* const maybe_input_filename = argc == 2 ? argv[1] : NULL;
+  char* const maybe_output_filename = argc == 3 ? argv[2] : NULL;
+
+  int my_rank;
+  MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+  int n_vertices = -1;
+  int* adjacency_matrix = NULL;
+
+  if (my_rank == 0) {
+    int close_input = 0;
+    FILE* input_file = stdout;
+    if (maybe_input_filename != NULL) {
+      fopen_s(&input_file, maybe_input_filename, "rb");
+      close_input = 1;
+    }
+    if (input_file == NULL) {
+      fprintf(stderr, "Error opening input file.");
+      return 1;
+    }
+    fread(&n_vertices, sizeof(int), 1, input_file);
+    const int n_adjacency_matrix_values = n_vertices * n_vertices;
+#ifdef DEBUG
+    fprintf(stderr, "Allocating adjacency matrix with %i values (verts = %i)", n_adjacency_matrix_values, n_vertices);
+#endif // DEBUG
+    adjacency_matrix = calloc(n_adjacency_matrix_values, sizeof(int));
+    if (adjacency_matrix == NULL) {
+      fprintf(stderr, "Failed to allocate memory for adjacency matrix.");
+      return 1;
+    }
+    fread(adjacency_matrix, sizeof(int), n_adjacency_matrix_values, input_file);
+    if (close_input) {
+      fclose(input_file);
+    }
+  }
+
+  apsp_floyd_warshall(adjacency_matrix, n_vertices);
 
 #ifdef DEBUG
-  debug_print_matrix("apsp_floyd_warshall: final result =", adjacency_matrix, 4, 4);
+  if (my_rank == 0) {
+    debug_print_matrix(stderr, "apsp_floyd_warshall: final result =", adjacency_matrix, 1, 32);
+  }
 #endif // DEBUG
+
+  if (my_rank == 0) {
+    if (adjacency_matrix == NULL) {
+      fprintf(stderr, "No adjacency matrix to output.");
+      return 1;
+    }
+    int close_output = 0;
+    FILE* output_file = stdout;
+    if (maybe_output_filename != NULL) {
+      fopen_s(&output_file, maybe_output_filename, "w+");
+      close_output = 1;
+    }
+    if (output_file == NULL) {
+      fprintf(stderr, "Error opening output file.");
+      return 1;
+    }
+    fprintf(output_file, "%i", n_vertices);
+    for (int i = 0; i < n_vertices * n_vertices; i++) {
+      fprintf(output_file, " %i", adjacency_matrix[i]);
+    }
+    if (close_output) {
+      fclose(output_file);
+    }
+  }
+
+  MPI_Finalize();
+
   return 0;
 }

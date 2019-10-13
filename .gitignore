@@ -5,6 +5,8 @@
 **/x86/Debug
 **/x64/Release
 **/x86/Release
+*.vscode
+**/__pycache__
 
 # Prerequisites
 *.d
