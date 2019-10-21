@@ -3,6 +3,8 @@
 #include <mpi.h>
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
+#include <time.h>
 #include <stdio.h>
 #include <errno.h>
 #include <stdarg.h>
@@ -571,7 +573,70 @@ void pause_to_allow_attachment()
   MPI_Barrier(MPI_COMM_WORLD);
 }
 
-int main(int argc, char* argv[])
+errno_t load_matrix_file(FILE* input_file, int* n_vertices, int** adjacency_matrix)
+{
+  if (input_file == NULL) {
+    fprintf(stderr, "Input file cannot be null.");
+    return EINVAL;
+  }
+  fread(n_vertices, sizeof(int), 1, input_file);
+  const int n_adjacency_matrix_values = (*n_vertices) * (*n_vertices);
+#ifdef DEBUG
+  fprintf(stderr, "Allocating adjacency matrix with %i values (verts = %i)", n_adjacency_matrix_values, *n_vertices);
+#endif // DEBUG
+  * adjacency_matrix = calloc(n_adjacency_matrix_values, sizeof(int));
+  if (*adjacency_matrix == NULL) {
+    fprintf(stderr, "Failed to allocate memory for adjacency matrix.");
+    return ENOMEM;
+  }
+  fread(*adjacency_matrix, sizeof(int), n_adjacency_matrix_values, input_file);
+  return 0;
+}
+
+errno_t write_matrix_file(FILE* output_file, int as_text, int n_vertices, int* adjacency_matrix)
+{
+  if (output_file == NULL) {
+    fprintf(stderr, "Output file cannot be null.");
+    return EINVAL;
+  }
+
+  if (as_text) {
+    fprintf(output_file, "%i", n_vertices);
+    for (int i = 0; i < n_vertices * n_vertices; i++) {
+      fprintf(output_file, " %i", adjacency_matrix[i]);
+    }
+  }
+  else {
+    fwrite(&n_vertices, sizeof(int), 1, output_file);
+    const int n_adjacency_values = n_vertices * n_vertices;
+    fwrite(adjacency_matrix, sizeof(int), n_adjacency_values, output_file);
+  }
+  return 0;
+}
+
+void parse_cli_args(int argc, char* argv[], char** envp, char** maybe_input_filename, char** maybe_output_filename, int* output_as_text, int* include_timing_info)
+{
+  *maybe_input_filename = NULL;
+  *maybe_output_filename = NULL;
+
+  /* We start at 1 in order to skip the name of the program which is argv[0]. */
+  for (int i = 1; i < argc; i++) {
+    if (strcmp("-text", argv[i]) == 0) {
+      *output_as_text = 1;
+    }
+    else if (strcmp("-time", argv[i]) == 0) {
+      *include_timing_info = 1;
+    }
+    else if (*maybe_input_filename == NULL) {
+      *maybe_input_filename = argv[i];
+    }
+    else if (*maybe_output_filename == NULL) {
+      *maybe_output_filename = argv[i];
+    }
+  }
+}
+
+int main(int argc, char* argv[], char** envp)
 {
   MPI_Init(&argc, &argv);
 
@@ -579,12 +644,10 @@ int main(int argc, char* argv[])
   pause_to_allow_attachment();
 #endif // DEBUG
 
-  if (argc > 3) {
-    fprintf(stderr, "Expected usage: [input:stdin] [output:stdout]");
-    return 1;
-  }
-  char* const maybe_input_filename = argc == 2 ? argv[1] : NULL;
-  char* const maybe_output_filename = argc == 3 ? argv[2] : NULL;
+  char* maybe_input_filename;
+  char* maybe_output_filename;
+  int output_as_text, include_timing_info;
+  parse_cli_args(argc, argv, envp, &maybe_input_filename, &maybe_output_filename, &output_as_text, &include_timing_info);
 
   int my_rank;
   MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
@@ -599,22 +662,8 @@ int main(int argc, char* argv[])
       fopen_s(&input_file, maybe_input_filename, "rb");
       close_input = 1;
     }
-    if (input_file == NULL) {
-      fprintf(stderr, "Error opening input file.");
-      return 1;
-    }
-    fread(&n_vertices, sizeof(int), 1, input_file);
-    const int n_adjacency_matrix_values = n_vertices * n_vertices;
-#ifdef DEBUG
-    fprintf(stderr, "Allocating adjacency matrix with %i values (verts = %i)", n_adjacency_matrix_values, n_vertices);
-#endif // DEBUG
-    adjacency_matrix = calloc(n_adjacency_matrix_values, sizeof(int));
-    if (adjacency_matrix == NULL) {
-      fprintf(stderr, "Failed to allocate memory for adjacency matrix.");
-      return 1;
-    }
-    fread(adjacency_matrix, sizeof(int), n_adjacency_matrix_values, input_file);
-    if (close_input) {
+    load_matrix_file(input_file, &n_vertices, &adjacency_matrix);
+    if (close_input && input_file != NULL) {
       fclose(input_file);
     }
   }
@@ -638,15 +687,8 @@ int main(int argc, char* argv[])
       fopen_s(&output_file, maybe_output_filename, "w+");
       close_output = 1;
     }
-    if (output_file == NULL) {
-      fprintf(stderr, "Error opening output file.");
-      return 1;
-    }
-    fprintf(output_file, "%i", n_vertices);
-    for (int i = 0; i < n_vertices * n_vertices; i++) {
-      fprintf(output_file, " %i", adjacency_matrix[i]);
-    }
-    if (close_output) {
+    write_matrix_file(output_file, output_as_text, n_vertices, adjacency_matrix);
+    if (close_output && output_file != NULL) {
       fclose(output_file);
     }
   }
