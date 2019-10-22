@@ -605,6 +605,7 @@ errno_t write_matrix_file(FILE* output_file, int as_text, int n_vertices, int* a
     for (int i = 0; i < n_vertices * n_vertices; i++) {
       fprintf(output_file, " %i", adjacency_matrix[i]);
     }
+    fprintf(output_file, "\n");
   }
   else {
     fwrite(&n_vertices, sizeof(int), 1, output_file);
@@ -668,12 +669,15 @@ int main(int argc, char* argv[], char** envp)
     }
   }
 
+  clock_t calc_start, calc_completed;
+  calc_start = clock();
   apsp_floyd_warshall(adjacency_matrix, n_vertices);
+  calc_completed = clock();
 
 #ifdef DEBUG
   if (my_rank == 0) {
     debug_print_matrix(stderr, "apsp_floyd_warshall: final result =", adjacency_matrix, 1, 32);
-  }
+}
 #endif // DEBUG
 
   if (my_rank == 0) {
@@ -691,6 +695,11 @@ int main(int argc, char* argv[], char** envp)
     if (close_output && output_file != NULL) {
       fclose(output_file);
     }
+  }
+
+  if (include_timing_info) {
+    clock_t calc_duration = calc_completed - calc_start;
+    fprintf(stdout, "time=%lf", ((double)calc_duration / (double)CLOCKS_PER_SEC) * 1000);
   }
 
   MPI_Finalize();

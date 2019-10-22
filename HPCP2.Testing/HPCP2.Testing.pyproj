@@ -22,6 +22,12 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="floyd_warshall.py" />
+    <Compile Include="graph_measurements.py">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="measure_performance.py">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="test_program.py">
       <SubType>Code</SubType>
     </Compile>
@@ -30,9 +36,14 @@
     <Folder Include="inputs\" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include="inputs\1024.in" />
     <Content Include="inputs\16.in" />
+    <Content Include="inputs\2048.in" />
+    <Content Include="inputs\256.in" />
     <Content Include="inputs\32.in" />
     <Content Include="inputs\4.in" />
+    <Content Include="inputs\4096.in" />
+    <Content Include="inputs\512.in" />
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
   <!-- Uncomment the CoreCompile target to enable the Build command in
