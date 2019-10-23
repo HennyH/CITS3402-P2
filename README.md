@@ -8,7 +8,7 @@
 4. `HPCP2.Testing/measure_performance.py` - Python script which gathers timing information of various thread count and sizes of the compiled program.
 5. `HPCP2.Testing/graph_measurements.py` - Calculates summary stats from the measurements gathered from the `measurement_performance.py`.
 6. `Report.pdf` - The PDF of the report.
-7. `executable_x64.zip` - A zip file with the compiled program for 64-bit Windows 10.
+7. `executable_win10_x64.zip` - A zip file with the compiled program for 64-bit Windows 10.
 
 # Building
 
