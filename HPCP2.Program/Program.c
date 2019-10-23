@@ -27,11 +27,13 @@ inline int apsp_floyd_warshall_calc_tile_matrix_dim(int n_vertices, int n_availa
 /// Calculates the dimension of the tiles which compose the 'tile matrix'.
 /// </summary>
 /// <param name="n_vertices">The n vertices.</param>
-/// <param name="n_processes">The n processes.</param>
-/// <returns>The dimension of the tile matrix.</returns>
-inline int apsp_floyd_warshall_calc_tile_dim(int n_vertices, int time_matrix_dim)
+/// <param name="tile_matrix_dim">The tile matrix dim.</param>
+/// <returns>
+/// The dimension of the tile matrix.
+/// </returns>
+inline int apsp_floyd_warshall_calc_tile_dim(int n_vertices, int tile_matrix_dim)
 {
-  return (int)ceil((double)n_vertices / (double)time_matrix_dim);
+  return (int)ceil((double)n_vertices / (double)tile_matrix_dim);
 }
 
 /// <summary>
@@ -42,7 +44,9 @@ inline int apsp_floyd_warshall_calc_tile_dim(int n_vertices, int time_matrix_dim
 /// <param name="tile_dim">The tile dimension.</param>
 /// <param name="tile_i">The tile i.</param>
 /// <param name="tile_j">The tile j.</param>
-/// <returns>True if the tile contains the described pair(s).</returns>
+/// <returns>
+/// True if the tile contains the described pair(s).
+/// </returns>
 inline int apsp_floyd_warshall_does_tile_cover_vertex_pair(int from_vertex, int to_vertex, int tile_dim, int tile_i, int tile_j)
 {
   return (from_vertex == INT_NULL || (from_vertex >= tile_i * tile_dim && from_vertex < (tile_i + 1) * tile_dim))
@@ -53,11 +57,12 @@ inline int apsp_floyd_warshall_does_tile_cover_vertex_pair(int from_vertex, int 
 /// Determine the tile position (row=tile_i, col=tile_j) which a process with the given rank is responsible for processing.
 /// </summary>
 /// <param name="rank">The rank.</param>
-/// <param name="n_vertices">The n vertices.</param>
-/// <param name="tile_dim">The dimension of the tiles.</param>
+/// <param name="tile_matrix_dim">The tile matrix dim.</param>
 /// <param name="tile_i">out: The tile_i.</param>
 /// <param name="tile_j">out: The tile_j.</param>
-/// <returns>An error code.</returns>
+/// <returns>
+/// An error code.
+/// </returns>
 errno_t apsp_floyd_warshall_tile_determine_i_j_for_process_rank(int rank, int tile_matrix_dim, int* tile_i, int* tile_j)
 {
   int curr_rank = 0;
@@ -80,12 +85,16 @@ errno_t apsp_floyd_warshall_tile_determine_i_j_for_process_rank(int rank, int ti
 /// <param name="adjacency_matrix">The adjacency matrix.</param>
 /// <param name="n_vertices">The n vertices.</param>
 /// <param name="tile_dim">The dimension of the tiles.</param>
+/// <param name="tile_matrix_dim">The tile matrix dim.</param>
 /// <param name="root">The root process which sends the data.</param>
 /// <param name="comm">The communicator.</param>
+/// <param name="tile_type">Type of the tile.</param>
 /// <param name="tile_i">out: The recieved tile_i.</param>
 /// <param name="tile_j">out: The recieved tile_j.</param>
 /// <param name="tile_buffer">inout: The buffer to store the recieved tile.</param>
-/// <returns>An error code.</returns>
+/// <returns>
+/// An error code.
+/// </returns>
 errno_t apsp_floyd_warshall_distribute_tiles(int* adjacency_matrix, int n_vertices, int tile_dim, int tile_matrix_dim, int root, MPI_Comm comm, MPI_Datatype tile_type, int* tile_i, int* tile_j, int* tile_buffer)
 {
   int n_processes, my_rank;
@@ -95,6 +104,9 @@ errno_t apsp_floyd_warshall_distribute_tiles(int* adjacency_matrix, int n_vertic
   const int tile_size = (int)(tile_dim * tile_dim);
   int* tiles = NULL;
 
+  /* Sadly the vector type isn't rich enough to properly express these 'tiles' we wish to construct in a
+   * way that's compatible with Scatter. The reason is kinda complicated...
+   */
   if (my_rank == root) {
     tiles = calloc((size_t)n_processes * tile_size, sizeof(int));
     for (int i = 0; i < tile_size; i++) {
@@ -126,6 +138,7 @@ errno_t apsp_floyd_warshall_distribute_tiles(int* adjacency_matrix, int n_vertic
     }
   }
 
+  /* Distributes contigous sections of a buffer between all processes in a communicator. */
   MPI_Scatter(tiles, 1, tile_type, tile_buffer, tile_size, MPI_INT, root, comm);
 
   if (my_rank == root && tiles != NULL) {
@@ -138,8 +151,9 @@ errno_t apsp_floyd_warshall_distribute_tiles(int* adjacency_matrix, int n_vertic
 }
 
 /// <summary>
-/// Determine the domain of vertices the tile covers. That is what `from_vertex` -> `to_vertex` pairs does the tile include.
+/// Determine the domain of vertices the tile covers. That is what `from_vertex` -&gt; `to_vertex` pairs does the tile include.
 /// </summary>
+/// <param name="n_vertices">The n vertices.</param>
 /// <param name="tile_dim">The tile dim.</param>
 /// <param name="tile_i">The tile i.</param>
 /// <param name="tile_j">The tile j.</param>
@@ -147,7 +161,9 @@ errno_t apsp_floyd_warshall_distribute_tiles(int* adjacency_matrix, int n_vertic
 /// <param name="from_vertex_end">From vertex end.</param>
 /// <param name="to_vertex_start">To vertex start.</param>
 /// <param name="to_vertex_end">To vertex end.</param>
-/// <returns>The from and to vertex domain start and end pairs.</returns>
+/// <returns>
+/// The from and to vertex domain start and end pairs.
+/// </returns>
 errno_t apsp_floyd_warshall_determine_tile_vertex_domain(int n_vertices, int tile_dim, int tile_i, int tile_j, int* from_vertex_start, int* from_vertex_end, int* to_vertex_start, int* to_vertex_end)
 {
   *from_vertex_start = tile_i * tile_dim;
@@ -157,6 +173,17 @@ errno_t apsp_floyd_warshall_determine_tile_vertex_domain(int n_vertices, int til
   return 0;
 }
 
+/// <summary>
+/// Gathers all the individual tiles from each process into the root's adjacency matrix.
+/// </summary>
+/// <param name="adjacency_matrix">The adjacency matrix.</param>
+/// <param name="n_vertices">The n vertices.</param>
+/// <param name="tile_dim">The tile dim.</param>
+/// <param name="tile_matrix_dim">The tile matrix dim.</param>
+/// <param name="root">The root.</param>
+/// <param name="tile">The tile.</param>
+/// <param name="comm">The comm.</param>
+/// <returns></returns>
 errno_t apsp_floyd_warshall_gather_tiles_to_root(int* adjacency_matrix, int n_vertices, int tile_dim, int tile_matrix_dim, int root, int* tile, MPI_Comm comm)
 {
   int n_processes, my_rank;
@@ -176,6 +203,9 @@ errno_t apsp_floyd_warshall_gather_tiles_to_root(int* adjacency_matrix, int n_ve
   }
 
   const int n_values_in_tile = tile_dim * tile_dim;
+  /* A collective communication which has all processes send a message to the root. The root then combines these messages into a
+   * contiguous result.
+   */
   MPI_Gather(tile, n_values_in_tile, MPI_INT, values, n_values_in_tile, MPI_INT, root, comm);
 
   if (my_rank != root) {
@@ -212,9 +242,16 @@ errno_t apsp_floyd_warshall_gather_tiles_to_root(int* adjacency_matrix, int n_ve
   return 0;
 }
 
+/// <summary>
+/// Create a communicator which includes processes that will be assigned a tile.
+/// </summary>
+/// <param name="n_processes">The n processes.</param>
+/// <param name="tile_world_comm">The tile world comm.</param>
+/// <returns></returns>
 errno_t apsp_floyd_warshall_create_tile_world_comm(int n_processes, MPI_Comm* tile_world_comm)
 {
   MPI_Group world_group;
+  /* Gets a group (set) which contains the processes within a communicator. */
   MPI_Comm_group(MPI_COMM_WORLD, &world_group);
 
   int* ranks = calloc(n_processes, sizeof(int));
@@ -227,7 +264,9 @@ errno_t apsp_floyd_warshall_create_tile_world_comm(int n_processes, MPI_Comm* ti
   }
 
   MPI_Group tile_group;
+  /* Derives a new group from a given group where only processes with a given rank are included. */
   MPI_Group_incl(world_group, n_processes, ranks, &tile_group);
+  /* Create a communicator from a group. */
   MPI_Comm_create(MPI_COMM_WORLD, tile_group, tile_world_comm);
   free(ranks);
   if (*tile_world_comm == MPI_COMM_NULL) {
@@ -238,6 +277,15 @@ errno_t apsp_floyd_warshall_create_tile_world_comm(int n_processes, MPI_Comm* ti
   return 0;
 }
 
+/// <summary>
+/// Create a collection of communicators which include the processes assigned to the tiles of each row.
+/// </summary>
+/// <param name="tile_world_comm">The tile world comm.</param>
+/// <param name="n_vertices">The n vertices.</param>
+/// <param name="tile_dim">The tile dim.</param>
+/// <param name="tile_matrix_dim">The tile matrix dim.</param>
+/// <param name="tile_row_comms">The tile row comms.</param>
+/// <returns></returns>
 errno_t apsp_floyd_warshall_create_row_comms(MPI_Comm tile_world_comm, int n_vertices, int tile_dim, int tile_matrix_dim, MPI_Comm* const tile_row_comms)
 {
   int n_tiles, my_rank;
@@ -283,6 +331,15 @@ errno_t apsp_floyd_warshall_create_row_comms(MPI_Comm tile_world_comm, int n_ver
   return 0;
 }
 
+/// <summary>
+/// Create a collection of communicators which include the processes assigned to the columns of each row.
+/// </summary>
+/// <param name="tile_world_comm">The tile world comm.</param>
+/// <param name="n_vertices">The n vertices.</param>
+/// <param name="tile_dim">The tile dim.</param>
+/// <param name="tile_matrix_dim">The tile matrix dim.</param>
+/// <param name="tile_col_comms">The tile col comms.</param>
+/// <returns></returns>
 errno_t apsp_floyd_warshall_create_col_comms(MPI_Comm tile_world_comm, int n_vertices, int tile_dim, int tile_matrix_dim, MPI_Comm* const tile_col_comms)
 {
   int n_tiles, my_rank;
@@ -327,22 +384,42 @@ errno_t apsp_floyd_warshall_create_col_comms(MPI_Comm tile_world_comm, int n_ver
   return 0;
 }
 
+/// <summary>
+/// Determines if a tile contains a column segment that will need to be broadcast to other proceses.
+/// </summary>
+/// <param name="k">The k.</param>
+/// <param name="tile_dim">The tile dim.</param>
+/// <param name="tile_i">The tile i.</param>
+/// <param name="tile_j">The tile j.</param>
+/// <returns></returns>
 inline int apsp_floyd_warshall_does_tile_have_kth_col_segment(int k, int tile_dim, int tile_i, int tile_j)
 {
-  /* Our tile is contains the column if: tile_j * tile_dim <= k < (tile_j + 1) * tile_dim
-   * Note: on the RHS we have '<' not a '<=' because we're 0 indexed.
-   */
   return (tile_j * tile_dim <= k && k < tile_dim * (tile_j + 1));
 }
 
+/// <summary>
+/// Determines if a tile contains a row segment that will need to be broadcast to other proceses.
+/// </summary>
+/// <param name="k">The k.</param>
+/// <param name="tile_dim">The tile dim.</param>
+/// <param name="tile_i">The tile i.</param>
+/// <param name="tile_j">The tile j.</param>
+/// <returns></returns>
 inline int apsp_floyd_warshall_does_tile_have_kth_row_segment(int k, int tile_dim, int tile_i, int tile_j)
 {
-  /* Our tile is contains the row if: tile_i * tile_dim <= k < (tile_i + 1) * tile_dim
-   * Note: on the RHS we have '<' not a '<=' because we're 0 indexed.
-   */
   return (tile_i * tile_dim <= k && k < tile_dim * (tile_i + 1));
 }
 
+/// <summary>
+/// Gets the required column segment for the k-th calculation if one exists otherwise a vector of zeros.
+/// </summary>
+/// <param name="k">The k.</param>
+/// <param name="tile">The tile.</param>
+/// <param name="tile_dim">The tile dim.</param>
+/// <param name="tile_i">The tile i.</param>
+/// <param name="tile_j">The tile j.</param>
+/// <param name="col_segment">The col segment.</param>
+/// <returns></returns>
 errno_t apsp_floyd_warshall_get_kth_col_segment(int k, int* tile, int tile_dim, int tile_i, int tile_j, int** col_segment)
 {
   if (!apsp_floyd_warshall_does_tile_have_kth_col_segment(k, tile_dim, tile_i, tile_j)) {
@@ -361,6 +438,16 @@ errno_t apsp_floyd_warshall_get_kth_col_segment(int k, int* tile, int tile_dim, 
   return 0;
 }
 
+/// <summary>
+/// Gets the required row segment for the k-th calculation if one exists otherwise a vector of zeros.
+/// </summary>
+/// <param name="k">The k.</param>
+/// <param name="tile">The tile.</param>
+/// <param name="tile_dim">The tile dim.</param>
+/// <param name="tile_i">The tile i.</param>
+/// <param name="tile_j">The tile j.</param>
+/// <param name="row_segment">The row segment.</param>
+/// <returns></returns>
 errno_t apsp_floyd_warshall_get_kth_row_segment(int k, int* tile, int tile_dim, int tile_i, int tile_j, int** row_segment)
 {
   if (!apsp_floyd_warshall_does_tile_have_kth_row_segment(k, tile_dim, tile_i, tile_j)) {
@@ -379,6 +466,15 @@ errno_t apsp_floyd_warshall_get_kth_row_segment(int k, int* tile, int tile_dim, 
   return 0;
 }
 
+/// <summary>
+/// Determine the tile which covers the intersection of the k-th row and column.
+/// </summary>
+/// <param name="k">The k.</param>
+/// <param name="tile_matrix_dim">The tile matrix dim.</param>
+/// <param name="tile_dim">The tile dim.</param>
+/// <param name="tile_i">The tile i.</param>
+/// <param name="tile_j">The tile j.</param>
+/// <returns></returns>
 errno_t apsp_floyd_warshall_determine_tile_i_j_which_covers_kth_row_and_col(int k, int tile_matrix_dim, int tile_dim, int* tile_i, int* tile_j)
 {
   for (int i = 0; i < tile_matrix_dim; i++) {
@@ -394,19 +490,56 @@ errno_t apsp_floyd_warshall_determine_tile_i_j_which_covers_kth_row_and_col(int 
   return EINVAL;
 }
 
+/// <summary>
+/// Gather the k-th row and column segments required for the process to update it's adjacency matrix tile.
+/// </summary>
+/// <param name="k">The k.</param>
+/// <param name="my_rank">My rank.</param>
+/// <param name="n_vertices">The n vertices.</param>
+/// <param name="tile_matrix_dim">The tile matrix dim.</param>
+/// <param name="tile">The tile.</param>
+/// <param name="tile_dim">The tile dim.</param>
+/// <param name="tile_i">The tile i.</param>
+/// <param name="tile_j">The tile j.</param>
+/// <param name="tile_world_comm">The tile world comm.</param>
+/// <param name="tile_row_comms">The tile row comms.</param>
+/// <param name="tile_col_comms">The tile col comms.</param>
+/// <param name="segment_type">Type of the segment.</param>
+/// <param name="required_kth_row_segment">The required KTH row segment.</param>
+/// <param name="required_kth_col_segment">The required KTH col segment.</param>
+/// <returns></returns>
 errno_t apsp_floyd_warshall_recieve_required_kth_row_and_column_segments(int k, int my_rank, int n_vertices, int tile_matrix_dim, int* tile, int tile_dim, int tile_i, int tile_j, MPI_Comm tile_world_comm, MPI_Comm* tile_row_comms, MPI_Comm* tile_col_comms, MPI_Datatype segment_type, int** required_kth_row_segment, int** required_kth_col_segment)
 {
   int kth_col_and_row_tile_i, kth_col_and_row_tile_j;
   apsp_floyd_warshall_determine_tile_i_j_which_covers_kth_row_and_col(k, tile_matrix_dim, tile_dim, &kth_col_and_row_tile_i, &kth_col_and_row_tile_j);
 
+  /* This will either put a vector of zeros into the row/col segment arrays OR a _segment_ of OUR tile if
+   * we are a process whose tile intersects along the k-th row or column.
+   */
   apsp_floyd_warshall_get_kth_row_segment(k, tile, tile_dim, tile_i, tile_j, required_kth_row_segment);
   apsp_floyd_warshall_get_kth_col_segment(k, tile, tile_dim, tile_i, tile_j, required_kth_col_segment);
 
-  MPI_Bcast(*required_kth_row_segment, 1, segment_type, kth_col_and_row_tile_i, tile_col_comms[tile_j]);
-  MPI_Bcast(*required_kth_col_segment, 1, segment_type, kth_col_and_row_tile_j, tile_row_comms[tile_i]);
+  /* Now each tile (which is along a particular column tile_j) participates in a broadcast with all other tiles
+   * in that row. A broadcast sends some message from the root (in this case the tile in that column which intersects the k-th row)
+   * to all other processes in the communicator (in this case all the _other_ tiles in the column).
+   *
+   * The exact same logic applies to the second broadcast which relates to rows of tiles. The end result of these two calls is
+   * that every process recieves (from itself or a different tile) the row and column segments it needs to perform its calculations.
+   */
+  MPI_Bcast(*required_kth_row_segment, 1, segment_type, kth_col_and_row_tile_i /* root */, tile_col_comms[tile_j]);
+  MPI_Bcast(*required_kth_col_segment, 1, segment_type, kth_col_and_row_tile_j /* root */, tile_row_comms[tile_i]);
   return 0;
 }
 
+/// <summary>
+/// Print a matrix in an easily read view for debugging.
+/// </summary>
+/// <param name="file">The file.</param>
+/// <param name="message">The message.</param>
+/// <param name="values">The values.</param>
+/// <param name="rows">The rows.</param>
+/// <param name="cols">The cols.</param>
+/// <param name="">The .</param>
 void debug_print_matrix(FILE* file, char* const message, int* values, int rows, int cols, ...)
 {
   va_list fmt_args;
@@ -436,11 +569,14 @@ void debug_print_matrix(FILE* file, char* const message, int* values, int rows, 
 errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices)
 {
   int n_available_processes, my_rank;
+  /* Get the number of processes in a communicator. */
   MPI_Comm_size(MPI_COMM_WORLD, &n_available_processes);
   MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
   /* Only the root process reads the file but all processes need the number of verticies during the setup portion.
    * Each process recieves their portion of the adjacency matrix later.
+   *
+   * A broadcast has all processes in a group recieve a message from the root (which may be itself), only the root sends the message.
    */
   MPI_Bcast(&n_vertices, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
@@ -496,10 +632,13 @@ errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices)
   MPI_Comm_rank(tile_world_comm, &my_rank);
 
   MPI_Datatype tile_type;
+  /* Defines a MPI data type which represents a python slice style operation. */
   MPI_Type_vector(1, tile_size, tile_size, MPI_INT, &tile_type);
+  /* Commits the custom type so that it can be used in message functions. */
   MPI_Type_commit(&tile_type);
 
   MPI_Datatype segment_type;
+  /* Defines a MPI data type which represents an array of a given data type and count. */
   MPI_Type_contiguous(tile_dim, MPI_INT, &segment_type);
   MPI_Type_commit(&segment_type);
 
@@ -554,6 +693,7 @@ errno_t apsp_floyd_warshall(int* adjacency_matrix, int n_vertices)
 
   apsp_floyd_warshall_gather_tiles_to_root(adjacency_matrix, n_vertices, tile_dim, tile_matrix_dim, 0, tile, tile_world_comm);
 
+  /* Clean up the memory used to contain our custom MPI data types. */
   MPI_Type_free(&tile_type);
   MPI_Type_free(&segment_type);
 
@@ -570,6 +710,7 @@ void pause_to_allow_attachment()
     fflush(stderr);
     fread_s(answer, sizeof(char) * _countof(answer), sizeof(char), _countof(answer), stdin);
   }
+  /* Block execution across all processes in the communicator until ALL programs reach this barrier. */
   MPI_Barrier(MPI_COMM_WORLD);
 }
 
@@ -619,6 +760,8 @@ void parse_cli_args(int argc, char* argv[], char** envp, char** maybe_input_file
 {
   *maybe_input_filename = NULL;
   *maybe_output_filename = NULL;
+  *include_timing_info = 0;
+  *output_as_text = 0;
 
   /* We start at 1 in order to skip the name of the program which is argv[0]. */
   for (int i = 1; i < argc; i++) {
@@ -639,6 +782,7 @@ void parse_cli_args(int argc, char* argv[], char** envp, char** maybe_input_file
 
 int main(int argc, char* argv[], char** envp)
 {
+  /* Initialize the MPI system and process the 'mpirun' arguments so that we get the arguments intended for our program. */
   MPI_Init(&argc, &argv);
 
 #ifdef DEBUG
@@ -651,6 +795,7 @@ int main(int argc, char* argv[], char** envp)
   parse_cli_args(argc, argv, envp, &maybe_input_filename, &maybe_output_filename, &output_as_text, &include_timing_info);
 
   int my_rank;
+  /* This method determines OUR (the current processs') rank _within_ the specified communicator. */
   MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
   int n_vertices = -1;
@@ -677,7 +822,7 @@ int main(int argc, char* argv[], char** envp)
 #ifdef DEBUG
   if (my_rank == 0) {
     debug_print_matrix(stderr, "apsp_floyd_warshall: final result =", adjacency_matrix, 1, 32);
-}
+  }
 #endif // DEBUG
 
   if (my_rank == 0) {
@@ -702,6 +847,7 @@ int main(int argc, char* argv[], char** envp)
     fprintf(stdout, "time=%lf", ((double)calc_duration / (double)CLOCKS_PER_SEC) * 1000);
   }
 
+  /* Free any memory associated with internal MPI structures and cleanly exit. */
   MPI_Finalize();
 
   return 0;
